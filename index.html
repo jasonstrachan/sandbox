@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Canvas: Flow, Contours & Hatching — Auto‑run (All Modes)</title>
+<style>
+  :root { --bg:#0b0c0f; --panel:#12141a; --ink:#e6e8ee; --muted:#93a0b4; --line:#1b1f29; }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+  .wrap { display:grid; grid-template-columns:320px 1fr; gap:16px; height:100%; padding:16px; box-sizing:border-box; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+  h1 { font-size:16px; margin:0 0 8px; font-weight:650; letter-spacing:.2px; }
+  fieldset { border:1px solid #1e2430; border-radius:12px; padding:10px; margin-top:8px; }
+  legend { color:var(--muted); padding:0 6px; }
+  label { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin:4px 0; }
+  input[type="number"], select, button, input[type="color"] { font:inherit; background:#0e1015; color:var(--ink); border:1px solid #212735; border-radius:8px; padding:6px 8px; }
+  input[type="number"] { width:90px; }
+  button { cursor:pointer; background:#1a2231; border-color:#2a3448; border-radius:10px; }
+  button.primary{ background:#17314a; border-color:#285279; }
+  .hint{ color:var(--muted); font-size:12px; }
+  .hidden { display:none; }
+  canvas { width:100%; height:100%; background:#0a0a0e; border:1px solid var(--line); border-radius:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel" id="controls">
+    <h1>Polygon Drawing Modes (Auto‑run)</h1>
+    <fieldset>
+      <legend>Draw</legend>
+      <div class="hint">Click to add vertices. <b>Enter</b> to close. <b>Z</b> undo. <b>Esc</b> clear.</div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button id="btn-close" class="primary">Close polygon</button>
+        <button id="btn-clear">Clear</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Mode</legend>
+      <label style="grid-template-columns:auto 1fr auto auto; gap:8px; align-items:center;">
+        <span>Pick a mode</span>
+        <select id="mode">
+          <option value="hatch">Parallel / Cross‑Hatch</option>
+          <option value="contours">Contours (marching squares)</option>
+          <option value="flow">Flow lines (open contours)</option>
+          <option value="guided">Side→Side guided flow</option>
+          <option value="noise">Perlin Noise Flow Field</option>
+          <option value="noiseDashed">Perlin Noise — Dashed</option>
+        </select>
+        <span style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="autoRun" checked><span class="hint">Auto‑run</span></span>
+        <button id="btn-run" class="primary">Run</button>
+      </label>
+    </fieldset>
+
+    <!-- Hatch settings -->
+    <fieldset id="panel-hatch" class="mode-panel">
+      <legend>Hatch</legend>
+      <label>Angle (°) <input type="number" id="hAngle" value="30"></label>
+      <label>Spacing (px) <input type="number" id="hSpace" value="12"></label>
+      <label>Line width (px) <input type="number" id="hLW" step="0.5" value="1.5"></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="hCross" checked> <span>Cross‑hatch</span></label>
+    </fieldset>
+
+    <!-- Contours settings -->
+    <fieldset id="panel-contours" class="mode-panel hidden">
+      <legend>Contours (marching squares)</legend>
+      <label>Contour gap (px) <input type="number" id="cGap" value="18"></label>
+      <label>Grid step (px) <input type="number" id="cStep" value="8"></label>
+    </fieldset>
+
+    <!-- Flow settings -->
+    <fieldset id="panel-flow" class="mode-panel hidden">
+      <legend>Flow lines (open contours)</legend>
+      <label>Seed spacing (px) <input type="number" id="fSeed" value="26"></label>
+      <label>Step size (px/iter) <input type="number" id="fStep" value="2"></label>
+      <label>Max length (segments) <input type="number" id="fMax" value="300"></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="fOrtho"> <span>Use orthogonal field</span></label>
+    </fieldset>
+
+    <!-- Guided settings -->
+    <fieldset id="panel-guided" class="mode-panel hidden">
+      <legend>Side→Side guided flow</legend>
+      <label>Direction (°) <input type="number" id="gAngle" value="0"></label>
+      <label>Boundary influence (px) <input type="number" id="gInfl" value="60"></label>
+      <label>Seed spacing on entry (px) <input type="number" id="gSeed" value="24"></label>
+      <label>Step size (px) <input type="number" id="gStep" value="2"></label>
+      <label>Max length (segments) <input type="number" id="gMax" value="600"></label>
+    </fieldset>
+
+    <!-- Noise settings -->
+    <fieldset id="panel-noise" class="mode-panel hidden">
+      <legend>Perlin Noise Flow Field</legend>
+      <label>Seed spacing (px) <input type="number" id="nSeedSpace" value="23"></label>
+      <label>Step size (px/iter) <input type="number" id="nStep" value="10"></label>
+      <label>Max length (segments) <input type="number" id="nMax" value="505"></label>
+      <label>Noise scale (px) <input type="number" id="nScale" value="120"></label>
+      <label>Octaves <input type="number" id="nOct" value="2"></label>
+      <label>Angle offset (°) <input type="number" id="nAngle" value="0"></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="nCurl"> <span>Use curl noise (swirly)</span></label>
+      <label>Seed <input type="number" id="nSeed" value="1337"></label>
+    </fieldset>
+
+    <!-- Noise dashed settings -->
+    <fieldset id="panel-noiseDashed" class="mode-panel hidden">
+      <legend>Perlin Noise — Dashed</legend>
+      <label>Min distance / seed spacing (px) <input type="number" id="ndSeedSpace" value="23"></label>
+      <label>Step size along field (px) <input type="number" id="ndStep" value="10"></label>
+      <label>Max segments per line <input type="number" id="ndMax" value="505"></label>
+      <label>Noise scale (px) <input type="number" id="ndScale" value="120"></label>
+      <label>Octaves <input type="number" id="ndOct" value="2"></label>
+      <label>Angle offset (°) <input type="number" id="ndAngle" value="0"></label>
+      <label>Seed <input type="number" id="ndSeed" value="1337"></label>
+      <label>Dash length (px) <input type="number" id="ndDash" value="16"></label>
+      <label>Gap (px) <input type="number" id="ndGap" value="10"></label>
+      <label>Jitter (0–1) <input type="number" id="ndJitter" step="0.05" value="0.00"></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="ndPhase" checked> <span>Random phase per line</span></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="ndEven" checked> <span>Even distribution (Poisson‑disc)</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Stroke & Color</legend>
+      <label>Stroke width (px) <input type="number" id="strokeLW" step="0.5" value="1.5"></label>
+      <label>Stroke <input type="color" id="color" value="#e6e8ee"></label>
+      <label>Background <input type="color" id="bg" value="#0a0a0e"></label>
+    </fieldset>
+  </div>
+
+  <div class="panel" style="display:grid; grid-template-rows:1fr auto;">
+    <canvas id="c" width="1280" height="900"></canvas>
+    <div class="hint">Auto‑run re-renders after tweaks; toggle it off for heavy settings.</div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
