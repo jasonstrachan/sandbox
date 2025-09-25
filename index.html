@@ -15,6 +15,7 @@
   label { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin:4px 0; }
   input[type="number"], select, button, input[type="color"] { font:inherit; background:#0e1015; color:var(--ink); border:1px solid #212735; border-radius:8px; padding:6px 8px; }
   input[type="number"] { width:90px; }
+  body.dragging-number, body.dragging-number * { cursor:ew-resize !important; user-select:none !important; }
   button { cursor:pointer; background:#1a2231; border-color:#2a3448; border-radius:10px; }
   button.primary{ background:#17314a; border-color:#285279; }
   .hint{ color:var(--muted); font-size:12px; }
@@ -44,6 +45,7 @@
           <option value="contours">Contours (marching squares)</option>
           <option value="flow">Flow lines (open contours)</option>
           <option value="guided">Side→Side guided flow</option>
+          <option value="skinFlow">Shape-Adhering Flow Skin</option>
           <option value="noise">Perlin Noise Flow Field</option>
           <option value="noiseDashed">Perlin Noise — Dashed</option>
         </select>
@@ -85,6 +87,15 @@
       <label>Seed spacing on entry (px) <input type="number" id="gSeed" value="24"></label>
       <label>Step size (px) <input type="number" id="gStep" value="2"></label>
       <label>Max length (segments) <input type="number" id="gMax" value="600"></label>
+    </fieldset>
+
+    <!-- Shape-adhering flow skin settings -->
+    <fieldset id="panel-skinFlow" class="mode-panel hidden">
+      <legend>Shape-Adhering Flow Skin</legend>
+      <label>Angle (°) <input type="number" id="skinAngle" value="-20"></label>
+      <label>Spacing (px) <input type="number" id="skinSpacing" value="8"></label>
+      <label>Falloff λ (px) <input type="number" id="skinFalloff" value="36"></label>
+      <label>Step size (px) <input type="number" id="skinStep" value="6"></label>
     </fieldset>
 
     <!-- Noise settings -->
