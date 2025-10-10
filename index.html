@@ -13,6 +13,9 @@
   fieldset { border:1px solid #1e2430; border-radius:12px; padding:10px; margin-top:8px; }
   legend { color:var(--muted); padding:0 6px; }
   label { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin:4px 0; }
+  .mode-categories { display:flex; gap:6px; align-items:center; margin-bottom:10px; }
+  .mode-categories button { flex:1; padding:6px 10px; border-radius:8px; border:1px solid #2a3448; background:#131a25; color:var(--ink); font:inherit; cursor:pointer; transition:background .18s ease; }
+  .mode-categories button.active { background:#1f2b3d; border-color:#3a4a66; }
   input[type="number"], select, button, input[type="color"] { font:inherit; background:#0e1015; color:var(--ink); border:1px solid #212735; border-radius:8px; padding:6px 8px; }
   input[type="number"] { width:90px; }
   body.dragging-number, body.dragging-number * { cursor:ew-resize !important; user-select:none !important; }
@@ -20,16 +23,16 @@
   button.primary{ background:#17314a; border-color:#285279; }
   .hint{ color:var(--muted); font-size:12px; }
   .hidden { display:none; }
-  canvas { width:100%; height:100%; background:#0a0a0e; border:1px solid var(--line); border-radius:14px; }
+  .canvas-stage { position:relative; width:100%; height:100%; border-radius:14px; overflow:hidden; }
+  .canvas-stage canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  #c { background:#0a0a0e; border:1px solid var(--line); border-radius:14px; }
+  #overlay { pointer-events:none; background:transparent; border:none; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="panel" id="controls">
-    <h1>Polygon Drawing Modes (Auto‑run)</h1>
     <fieldset>
-      <legend>Draw</legend>
-      <div class="hint">Click to add vertices. <b>Enter</b> to close. <b>Z</b> undo. <b>Esc</b> clear.</div>
       <div style="display:flex; gap:8px; margin-top:8px;">
         <button id="btn-close" class="primary">Close polygon</button>
         <button id="btn-clear">Clear</button>
@@ -37,42 +40,189 @@
     </fieldset>
 
     <fieldset>
-      <legend>Mode</legend>
-      <label style="grid-template-columns:auto 1fr auto auto; gap:8px; align-items:center;">
-        <span>Pick a mode</span>
+      <div class="mode-categories" id="mode-categories">
+        <button type="button" data-category="lines" class="active">Lines</button>
+        <button type="button" data-category="points">Points</button>
+        <button type="button" data-category="patterns">Patterns</button>
+        <button type="button" data-category="brushes">Brushes</button>
+      </div>
+      <label style="grid-template-columns:auto 1fr auto; gap:8px; align-items:center;">
         <select id="mode">
-          <option value="hatch">Parallel / Cross‑Hatch</option>
-          <option value="contours">Contours (marching squares)</option>
-          <option value="flow">Flow lines (open contours)</option>
-          <option value="guided">Side→Side guided flow</option>
-          <option value="skinFlow">Shape-Adhering Flow Skin</option>
-          <option value="noise">Perlin Noise Flow Field</option>
-          <option value="noiseDashed">Perlin Noise — Dashed</option>
+          <option value="hatch" data-category="patterns">Hatch</option>
+          <option value="net" data-category="patterns">Net</option>
+          <option value="contours" data-category="lines">Contours</option>
+          <option value="isolineGlow" data-category="lines">Isoline Glow</option>
+          <option value="flow" data-category="lines">Flow</option>
+          <option value="guided" data-category="lines">Guided</option>
+          <option value="skinFlow" data-category="lines">Skin Flow</option>
+          <option value="clipFlow" data-category="lines">Clip Flow</option>
+          <option value="inkRibbons" data-category="lines">Ink Ribbons</option>
+          <option value="expressiveBrush" data-category="brushes">Expressive Brush</option>
+          <option value="pixelatedBrush" data-category="brushes">Pixelated Brush</option>
+          <option value="asciiFill" data-category="patterns">Ascii Fill</option>
+          <option value="noise" data-category="lines">Noise Flow</option>
+          <option value="noiseDashed" data-category="lines">Noise Dashed</option>
+          <option value="stippleDots" data-category="points patterns">Stipple Dots</option>
+          <option value="stippleDashes" data-category="lines patterns">Stipple Dashes</option>
+          <option value="handdrawnCircles" data-category="points patterns">Handdrawn Circles</option>
+          <option value="voronoiShards" data-category="patterns">Voronoi Shards</option>
+          <option value="spiralBloom" data-category="patterns">Spiral Bloom</option>
+          <option value="watercolorWash" data-category="patterns">Watercolor Wash</option>
+          <option value="fabricWeave" data-category="patterns">Fabric Weave</option>
+          <option value="mosaicTessellation" data-category="patterns">Mosaic Tessellation</option>
+          <option value="exampleVoronoi" data-category="lines">Voronoi Medial Axis Flow</option>
+          <option value="exampleGVF" data-category="lines">Gradient Vector Flow</option>
+          <option value="exampleLaplacian" data-category="lines">Laplacian Growth Patterns</option>
+          <option value="exampleConformal" data-category="lines">Conformal Mapping Flow</option>
+          <option value="exampleElectrostatic" data-category="lines">Electrostatic Field Lines</option>
+          <option value="exampleCurvature" data-category="lines">Curvature-Based Flow</option>
+          <option value="exampleAnisotropic" data-category="lines">Anisotropic Distance Field</option>
+          <option value="exampleHarmonic" data-category="lines">Harmonic Function Field</option>
+          <option value="exampleSkeleton" data-category="lines">Straight Skeleton</option>
+          <option value="exampleTensor" data-category="lines">Tensor Field Design</option>
+          <option value="exampleLevelSet" data-category="lines">Level Set Evolution</option>
+          <option value="examplePoisson" data-category="lines">Poisson Disk Flow</option>
         </select>
-        <span style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="autoRun" checked><span class="hint">Auto‑run</span></span>
-        <button id="btn-run" class="primary">Run</button>
       </label>
     </fieldset>
 
     <!-- Hatch settings -->
     <fieldset id="panel-hatch" class="mode-panel">
-      <legend>Hatch</legend>
-      <label>Angle (°) <input type="number" id="hAngle" value="30"></label>
-      <label>Spacing (px) <input type="number" id="hSpace" value="12"></label>
-      <label>Line width (px) <input type="number" id="hLW" step="0.5" value="1.5"></label>
+      <label>Angle (°) <input type="number" id="hAngle" value="48"></label>
+      <label>Spacing (px) <input type="number" id="hSpace" value="11"></label>
+      <label>Line width (px) <input type="number" id="hLW" step="0.5" value="1"></label>
+      <label>Organic wobble <input type="range" id="hOrganic" min="0" max="1" step="0.05" value="0.9"></label>
       <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="hCross" checked> <span>Cross‑hatch</span></label>
+      <label>Highlight size <input type="range" id="hCrossSize" min="0.2" max="3" step="0.05" value="1.05"></label>
+      <label>Shear segments <input type="range" id="hShearSegments" min="0" max="6" step="1" value="0"></label>
+      <label>Shear offset (px) <input type="range" id="hShearOffset" min="0" max="20" step="1" value="6"></label>
+    </fieldset>
+
+    <!-- Net settings -->
+    <fieldset id="panel-net" class="mode-panel hidden">
+      <label>Spacing (px) <input type="number" id="netSpacing" value="26" min="4" step="1"></label>
+      <label>Warp (0–2) <input type="number" id="netWarp" value="0.65" min="0" max="2" step="0.05"></label>
+      <label>Noise scale <input type="number" id="netNoiseScale" value="0.004" min="0.0005" step="0.0005"></label>
+      <label>Line width (px) <input type="number" id="netLineWidth" value="1.25" min="0.1" step="0.05"></label>
+      <label>Seed <input type="number" id="netSeed" value="2323"></label>
     </fieldset>
 
     <!-- Contours settings -->
     <fieldset id="panel-contours" class="mode-panel hidden">
-      <legend>Contours (marching squares)</legend>
       <label>Contour gap (px) <input type="number" id="cGap" value="18"></label>
       <label>Grid step (px) <input type="number" id="cStep" value="8"></label>
     </fieldset>
 
+    <!-- Isoline glow settings -->
+    <fieldset id="panel-isolineGlow" class="mode-panel hidden">
+      <label>Grid step (px) <input type="number" id="isoGlowStep" value="8" min="2" step="1"></label>
+      <label>Band spacing (px) <input type="number" id="isoGlowSpacing" value="32" min="6" step="1"></label>
+      <label>Glow feather (px) <input type="number" id="isoGlowFeather" value="12" min="1" step="1"></label>
+      <label>Glow intensity (0–1) <input type="number" id="isoGlowGlowAlpha" value="0.85" min="0" max="1" step="0.05"></label>
+      <label>Band fill (0–1) <input type="number" id="isoGlowBandAlpha" value="0.22" min="0" max="1" step="0.02"></label>
+      <label>Max distance (px) <input type="number" id="isoGlowMaxDist" value="420" min="60" step="10"></label>
+    </fieldset>
+
+    <!-- Mosaic tessellation settings -->
+    <fieldset id="panel-mosaicTessellation" class="mode-panel hidden">
+      <label>Seed spacing (px) <input type="number" id="mosaicSpacing" value="46" min="8" step="1"></label>
+      <label>Relax iterations <input type="number" id="mosaicRelax" value="3" min="0" max="12" step="1"></label>
+      <label>Hex shard ratio (0–1) <input type="number" id="mosaicHexRatio" value="0.7" min="0" max="1" step="0.05"></label>
+      <label>Vertex jitter (0–1) <input type="number" id="mosaicJitter" value="0.35" min="0" max="1" step="0.05"></label>
+      <label>Glass shade variance (0–1) <input type="number" id="mosaicShade" value="0.6" min="0" max="1" step="0.05"></label>
+      <label>Outline width (px) <input type="number" id="mosaicOutline" value="2" min="0.2" step="0.1"></label>
+      <label>Seed <input type="number" id="mosaicSeed" value="1337"></label>
+    </fieldset>
+
+    <!-- Ink ribbons settings -->
+    <fieldset id="panel-inkRibbons" class="mode-panel hidden">
+      <label>Poisson spacing (px) <input type="number" id="ribbonSpacing" value="30" min="6" step="1"></label>
+      <label>Step size (px) <input type="number" id="ribbonStep" value="2.6" min="0.2" step="0.1"></label>
+      <label>Max segments <input type="number" id="ribbonMax" value="580" min="32" step="10"></label>
+      <label>Tangent blend (0–1) <input type="number" id="ribbonTangent" value="0.78" min="0" max="1" step="0.05"></label>
+      <label>Bias angle (°) <input type="number" id="ribbonBiasAngle" value="95" min="-180" max="180" step="1"></label>
+      <label>Noise strength (0–1) <input type="number" id="ribbonNoiseStrength" value="0.2" min="0" max="1" step="0.05"></label>
+      <label>Noise scale (px) <input type="number" id="ribbonNoiseScale" value="220" min="40" step="10"></label>
+      <label>Noise octaves <input type="number" id="ribbonNoiseOctaves" value="3" min="1" max="6" step="1"></label>
+      <label>Line width (px) <input type="number" id="ribbonLineWidth" value="1.6" min="0.4" step="0.05"></label>
+      <label>Seed jitter (0–1) <input type="number" id="ribbonJitter" value="0.25" min="0" max="1" step="0.05"></label>
+      <label>Anchor falloff (0–1) <input type="number" id="ribbonAnchor" value="0.3" min="0" max="1" step="0.05"></label>
+      <label>Seed <input type="number" id="ribbonSeed" value="2025"></label>
+    </fieldset>
+
+    <!-- Expressive brush settings -->
+    <fieldset id="panel-expressiveBrush" class="mode-panel hidden">
+      <div class="hint">Quick controls</div>
+      <label>Bristle spread (px)
+        <input type="range" id="brushSpread" min="12" max="48" step="1" value="26">
+      </label>
+      <label>Clumping (0–1)
+        <input type="range" id="brushClump" min="0" max="1" step="0.05" value="0.35">
+      </label>
+      <label>Solvent mix (0–1)
+        <input type="range" id="brushSolvent" min="0" max="1" step="0.05" value="0.18">
+      </label>
+      <label>Jitter macro (0–1)
+        <input type="range" id="brushJitter" min="0" max="1" step="0.05" value="0.45">
+      </label>
+      <div class="hint" style="margin-top:6px;">Detail controls</div>
+      <label>Bristle stiffness (0–1)
+        <input type="range" id="brushStiffness" min="0.1" max="1" step="0.05" value="0.65">
+      </label>
+      <label>Spacing jitter (0–1)
+        <input type="range" id="brushSpacingJitter" min="0" max="1" step="0.05" value="0.3">
+      </label>
+      <label>Paint load (0–1)
+        <input type="range" id="brushPaintLoad" min="0.2" max="1" step="0.05" value="0.8">
+      </label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center; margin-top:6px;">
+        <input type="checkbox" id="brushGpuDiffusion">
+        <span>Enable GPU diffusion prototype</span>
+      </label>
+      <div class="hint" style="font-size:11px; opacity:0.75;">Requires WebGL2 + float framebuffer support.</div>
+    </fieldset>
+
+    <!-- Pixelated expressive brush settings -->
+    <fieldset id="panel-pixelatedBrush" class="mode-panel hidden">
+      <div class="hint">Quick controls</div>
+      <label>Bristle spread (px)
+        <input type="range" id="pxBrushSpread" min="12" max="48" step="1" value="26">
+      </label>
+      <label>Clumping (0–1)
+        <input type="range" id="pxBrushClump" min="0" max="1" step="0.05" value="0.35">
+      </label>
+      <label>Solvent mix (0–1)
+        <input type="range" id="pxBrushSolvent" min="0" max="1" step="0.05" value="0.18">
+      </label>
+      <label>Jitter macro (0–1)
+        <input type="range" id="pxBrushJitter" min="0" max="1" step="0.05" value="0.45">
+      </label>
+      <div class="hint" style="margin-top:6px;">Detail controls</div>
+      <label>Bristle stiffness (0–1)
+        <input type="range" id="pxBrushStiffness" min="0.1" max="1" step="0.05" value="0.65">
+      </label>
+      <label>Spacing jitter (0–1)
+        <input type="range" id="pxBrushSpacingJitter" min="0" max="1" step="0.05" value="0.3">
+      </label>
+      <label>Paint load (0–1)
+        <input type="range" id="pxBrushPaintLoad" min="0.2" max="1" step="0.05" value="0.8">
+      </label>
+      <label>Pixel size (px)
+        <input type="range" id="pxBrushPixelSize" min="1" max="24" step="1" value="4">
+      </label>
+    </fieldset>
+
+    <!-- ASCII fill brush settings -->
+    <fieldset id="panel-asciiFill" class="mode-panel hidden">
+      <label>Font size (px) <input type="number" id="asciiFontSize" value="18" min="6" max="120" step="1"></label>
+      <label>Line spacing multiplier <input type="number" id="asciiSpacing" value="1.35" min="0.5" max="4" step="0.05"></label>
+      <label>Grid jitter (0–1) <input type="number" id="asciiJitter" value="0" min="0" max="1" step="0.02"></label>
+      <label>Base rotation (°) <input type="number" id="asciiAngle" value="0" min="-180" max="180" step="1"></label>
+      <label>Text snippets (use | separators) <input type="text" id="asciiCharset" value="WIN BIG $$$|CLAIM YOUR REWARD NOW|GUARANTEED APPROVAL TODAY" spellcheck="false"></label>
+    </fieldset>
+
     <!-- Flow settings -->
     <fieldset id="panel-flow" class="mode-panel hidden">
-      <legend>Flow lines (open contours)</legend>
       <label>Seed spacing (px) <input type="number" id="fSeed" value="26"></label>
       <label>Step size (px/iter) <input type="number" id="fStep" value="2"></label>
       <label>Max length (segments) <input type="number" id="fMax" value="300"></label>
@@ -81,7 +231,6 @@
 
     <!-- Guided settings -->
     <fieldset id="panel-guided" class="mode-panel hidden">
-      <legend>Side→Side guided flow</legend>
       <label>Direction (°) <input type="number" id="gAngle" value="0"></label>
       <label>Boundary influence (px) <input type="number" id="gInfl" value="60"></label>
       <label>Seed spacing on entry (px) <input type="number" id="gSeed" value="24"></label>
@@ -91,19 +240,26 @@
 
     <!-- Shape-adhering flow skin settings -->
     <fieldset id="panel-skinFlow" class="mode-panel hidden">
-      <legend>Shape-Adhering Flow Skin</legend>
-      <label>Angle (°) <input type="number" id="skinAngle" value="-20"></label>
-      <label>Spacing (px) <input type="number" id="skinSpacing" value="8"></label>
-      <label>Falloff λ (px) <input type="number" id="skinFalloff" value="36"></label>
-      <label>Step size (px) <input type="number" id="skinStep" value="6"></label>
+      <label>Angle (°) <input type="number" id="skinAngle" value="90"></label>
+      <label>Spacing (px) <input type="number" id="skinSpacing" value="35"></label>
+      <label>Falloff λ (px) <input type="number" id="skinFalloff" value="100"></label>
+      <label>Step size (px) <input type="number" id="skinStep" value="1"></label>
+    </fieldset>
+
+    <!-- Angle-clipped flow settings -->
+    <fieldset id="panel-clipFlow" class="mode-panel hidden">
+      <label>Angle (°) <input type="number" id="clipAngle" value="20"></label>
+      <label>Spacing (px) <input type="number" id="clipSpacing" value="16"></label>
+      <label>Line width (px) <input type="number" id="clipLW" step="0.5" value="1.5"></label>
+      <label>Near falloff <input type="range" id="clipFalloffNear" min="0.3" max="2.5" step="0.05" value="1.0"></label>
+      <label>Far falloff <input type="range" id="clipFalloffFar" min="0.3" max="3.2" step="0.05" value="1.0"></label>
     </fieldset>
 
     <!-- Noise settings -->
     <fieldset id="panel-noise" class="mode-panel hidden">
-      <legend>Perlin Noise Flow Field</legend>
-      <label>Seed spacing (px) <input type="number" id="nSeedSpace" value="23"></label>
-      <label>Step size (px/iter) <input type="number" id="nStep" value="10"></label>
-      <label>Max length (segments) <input type="number" id="nMax" value="505"></label>
+      <label>Poisson spacing (px) <input type="number" id="nSeedSpace" value="18"></label>
+      <label>Step size (px/iter) <input type="number" id="nStep" value="8"></label>
+      <label>Max length (segments) <input type="number" id="nMax" value="520"></label>
       <label>Noise scale (px) <input type="number" id="nScale" value="120"></label>
       <label>Octaves <input type="number" id="nOct" value="2"></label>
       <label>Angle offset (°) <input type="number" id="nAngle" value="0"></label>
@@ -113,10 +269,9 @@
 
     <!-- Noise dashed settings -->
     <fieldset id="panel-noiseDashed" class="mode-panel hidden">
-      <legend>Perlin Noise — Dashed</legend>
-      <label>Min distance / seed spacing (px) <input type="number" id="ndSeedSpace" value="23"></label>
-      <label>Step size along field (px) <input type="number" id="ndStep" value="10"></label>
-      <label>Max segments per line <input type="number" id="ndMax" value="505"></label>
+      <label>Poisson spacing (px) <input type="number" id="ndSeedSpace" value="18"></label>
+      <label>Step size along field (px) <input type="number" id="ndStep" value="8"></label>
+      <label>Max segments per line <input type="number" id="ndMax" value="520"></label>
       <label>Noise scale (px) <input type="number" id="ndScale" value="120"></label>
       <label>Octaves <input type="number" id="ndOct" value="2"></label>
       <label>Angle offset (°) <input type="number" id="ndAngle" value="0"></label>
@@ -124,8 +279,128 @@
       <label>Dash length (px) <input type="number" id="ndDash" value="16"></label>
       <label>Gap (px) <input type="number" id="ndGap" value="10"></label>
       <label>Jitter (0–1) <input type="number" id="ndJitter" step="0.05" value="0.00"></label>
+      <label>Near falloff <input type="range" id="ndFalloffNear" min="0.3" max="2.5" step="0.05" value="1.0"></label>
+      <label>Far falloff <input type="range" id="ndFalloffFar" min="0.3" max="3.2" step="0.05" value="1.0"></label>
       <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="ndPhase" checked> <span>Random phase per line</span></label>
       <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="ndEven" checked> <span>Even distribution (Poisson‑disc)</span></label>
+    </fieldset>
+
+    <!-- Stipple dots settings -->
+    <fieldset id="panel-stippleDots" class="mode-panel hidden">
+      <label>Spacing (px) <input type="number" id="stippleDotsSpacing" value="13" min="2" step="1"></label>
+      <label>Dot size (px radius) <input type="number" id="stippleDotsSize" value="2.2" step="0.1" min="0.1"></label>
+      <label>Size jitter (0–1) <input type="number" id="stippleDotsSizeJitter" value="0" step="0.05" min="0" max="1"></label>
+      <label>Scatter (px) <input type="number" id="stippleDotsScatter" value="2.2" step="0.1" min="0"></label>
+      <label>Noise scale (px) <input type="number" id="stippleDotsNoiseScale" value="140" step="5" min="1"></label>
+      <label>Noise influence (0–1) <input type="number" id="stippleDotsNoiseStrength" value="0.65" step="0.05" min="0" max="1"></label>
+      <label>Seed <input type="number" id="stippleDotsSeed" value="1089"></label>
+    </fieldset>
+
+    <!-- Stipple dashes settings -->
+    <fieldset id="panel-stippleDashes" class="mode-panel hidden">
+      <label>Spacing (px) <input type="number" id="stippleDashesSpacing" value="12" min="2" step="1"></label>
+      <label>Dash length (px) <input type="number" id="stippleDashesLength" value="7" step="0.5" min="0.5"></label>
+      <label>Length jitter (0–1) <input type="number" id="stippleDashesLengthJitter" value="0.35" step="0.05" min="0" max="1"></label>
+      <label>Dash weight (px) <input type="number" id="stippleDashesWeight" value="2.8" step="0.1" min="0.1"></label>
+      <label>Weight jitter (0–1) <input type="number" id="stippleDashesWeightJitter" value="0.25" step="0.05" min="0" max="1"></label>
+      <label>Scatter (px) <input type="number" id="stippleDashesScatter" value="0" step="0.1" min="0"></label>
+      <label>Near falloff <input type="range" id="stippleDashesFalloffNear" min="0.3" max="2.5" step="0.05" value="1.0"></label>
+      <label>Far falloff <input type="range" id="stippleDashesFalloffFar" min="0.3" max="3.2" step="0.05" value="1.0"></label>
+      <label>Direction (°) <input type="number" id="stippleDashesAngle" value="12" step="1" min="-180" max="180"></label>
+      <label>Drift amount (°) <input type="number" id="stippleDashesAngleDrift" value="16" step="1" min="0" max="90"></label>
+      <label>Drift scale (px) <input type="number" id="stippleDashesAngleScale" value="420" step="10" min="20"></label>
+      <label>Seed <input type="number" id="stippleDashesSeed" value="4512"></label>
+    </fieldset>
+
+    <!-- Hand-drawn circles settings -->
+    <fieldset id="panel-handdrawnCircles" class="mode-panel hidden">
+      <label>Spacing (px) <input type="number" id="handCirclesSpacing" value="13" min="4" step="1"></label>
+      <label>Size ratio <input type="number" id="handCirclesSizeRatio" value="1" step="0.05" min="0.2" max="1.6"></label>
+      <label>Size jitter (0–1) <input type="number" id="handCirclesSizeJitter" value="0" step="0.02" min="0" max="1"></label>
+      <label>Wobble amount (0–1) <input type="number" id="handCirclesWobble" value="0.06" step="0.02" min="0" max="1"></label>
+      <label style="grid-template-columns:auto 1fr; gap:10px; align-items:center;"><input type="checkbox" id="handCirclesFill" checked> <span>Fill gaps (bigger circles)</span></label>
+      <label>Seed <input type="number" id="handCirclesSeed" value="3102"></label>
+    </fieldset>
+
+    <!-- Voronoi shards settings -->
+    <fieldset id="panel-voronoiShards" class="mode-panel hidden">
+      <label>Seed spacing divisor <input type="number" id="vorShardsSpacingDiv" value="24" min="3" max="120"></label>
+      <label>Min seed spacing (px) <input type="number" id="vorShardsSpacingMin" value="18" min="2" max="160"></label>
+      <label>Line spacing (px) <input type="number" id="vorShardsLineSpacing" value="8" min="1" max="40" step="0.5"></label>
+      <label>Base angle (°) <input type="number" id="vorShardsAngle" value="18" step="1" min="0" max="180"></label>
+      <label>Angle jitter (°) <input type="number" id="vorShardsAngleJitter" value="32" step="1" min="0" max="180"></label>
+      <label>Organic jitter (0–1) <input type="number" id="vorShardsJitter" value="0.45" step="0.05" min="0" max="1"></label>
+      <label>Glow mix (0–1) <input type="number" id="vorShardsGradient" value="0.35" step="0.05" min="0" max="1"></label>
+    </fieldset>
+
+    <!-- Spiral bloom settings -->
+    <fieldset id="panel-spiralBloom" class="mode-panel hidden">
+      <label style="grid-template-columns:auto 1fr; gap:8px; align-items:center;">Origin
+        <select id="spiralBloomOrigin">
+          <option value="mixed">Centroid + corners</option>
+          <option value="centroid">Centroid bloom</option>
+          <option value="corners">Corner bloom</option>
+        </select>
+      </label>
+      <label>Arm count <input type="number" id="spiralBloomArms" value="6" min="1" max="48"></label>
+      <label>Turns <input type="number" id="spiralBloomTurns" value="4.5" step="0.1" min="0.6" max="12"></label>
+      <label>Growth tightness <input type="number" id="spiralBloomTightness" value="0.12" step="0.01" min="0.01" max="0.5"></label>
+      <label>Radius wobble (px) <input type="number" id="spiralBloomWobble" value="18" step="1" min="0" max="180"></label>
+      <label>Points per turn <input type="number" id="spiralBloomDensity" value="90" min="24" max="260"></label>
+      <label>Phase offset (°) <input type="number" id="spiralBloomPhase" value="0" step="1" min="-360" max="360"></label>
+      <label>Angle jitter (0–1) <input type="number" id="spiralBloomJitter" value="0.35" step="0.05" min="0" max="1.2"></label>
+      <label>Corner pull (0–1) <input type="number" id="spiralBloomCornerPull" value="0.78" step="0.02" min="0.4" max="0.98"></label>
+      <label>Base radius (px) <input type="number" id="spiralBloomStartRadius" value="26" step="1" min="2" max="200"></label>
+      <label>Seed <input type="number" id="spiralBloomSeed" value="1337"></label>
+    </fieldset>
+
+    <!-- Watercolor wash settings -->
+    <fieldset id="panel-watercolorWash" class="mode-panel hidden">
+      <label>Layers <input type="number" id="washLayers" value="6" min="1" max="24"></label>
+      <label>Blob scale (px) <input type="number" id="washScale" value="160" min="18" max="360" step="5"></label>
+      <label>Scale jitter (0–1) <input type="number" id="washScaleJitter" value="0.55" step="0.05" min="0" max="1"></label>
+      <label>Noise scale (px) <input type="number" id="washNoiseScale" value="320" min="24" max="800" step="8"></label>
+      <label>Coverage threshold (0–1) <input type="number" id="washThreshold" value="0.35" step="0.01" min="0" max="1"></label>
+      <label>Base opacity (0–1) <input type="number" id="washOpacity" value="0.24" step="0.01" min="0" max="1"></label>
+      <label>Hue jitter (°) <input type="number" id="washHueJitter" value="8" step="1" min="0" max="60"></label>
+      <label>Saturation jitter <input type="number" id="washSatJitter" value="0.18" step="0.01" min="0" max="0.9"></label>
+      <label>Lightness jitter <input type="number" id="washLightnessJitter" value="0.16" step="0.01" min="0" max="0.45"></label>
+      <label>Seed <input type="number" id="washSeed" value="1337"></label>
+    </fieldset>
+
+    <!-- Fabric weave settings -->
+    <fieldset id="panel-fabricWeave" class="mode-panel hidden">
+      <label>Orientation (°) <input type="number" id="weaveAngle" value="12" step="1" min="-180" max="180"></label>
+      <label>Ribbon spacing (px) <input type="number" id="weaveSpacing" value="48" min="6" max="220"></label>
+      <label>Ribbon width (px) <input type="number" id="weaveWidth" value="26" min="4" max="180"></label>
+      <label>Width modulation (0–1) <input type="number" id="weaveMod" value="0.35" step="0.01" min="0" max="1"></label>
+      <label>Noise scale (px) <input type="number" id="weaveNoiseScale" value="320" min="24" max="640" step="8"></label>
+      <label>Noise octaves <input type="number" id="weaveOctaves" value="3" min="1" max="6"></label>
+      <label>Phase offset (0–1) <input type="number" id="weaveOffset" value="0.35" step="0.01" min="0" max="1"></label>
+      <label>Contrast (0–1) <input type="number" id="weaveContrast" value="0.32" step="0.01" min="0" max="0.8"></label>
+      <label>Accent color <input type="color" id="weaveAccentColor" value="#d49c5b"></label>
+      <label>Seed <input type="number" id="weaveSeed" value="2112"></label>
+    </fieldset>
+
+    <!-- Voronoi example settings -->
+    <fieldset id="panel-exampleVoronoi" class="mode-panel hidden">
+      <label>Spacing divisor <input type="number" id="vorSpacingDiv" value="18" min="2" max="80"></label>
+      <label>Min spacing (px) <input type="number" id="vorSpacingMin" value="6" min="1" max="120"></label>
+      <label>Falloff scale <input type="number" id="vorFalloff" value="1.1" step="0.05" min="0.2" max="4"></label>
+      <label>Modulation freq A <input type="number" id="vorModA" value="5" step="0.1" min="0" max="24"></label>
+      <label>Modulation freq B <input type="number" id="vorModB" value="2.4" step="0.1" min="0" max="24"></label>
+      <label>Amplitude <input type="number" id="vorAmplitude" value="0.12" step="0.01" min="0" max="0.6"></label>
+      <label>Sample step (px) <input type="number" id="vorSampleStep" value="3" min="1" max="12"></label>
+    </fieldset>
+
+    <!-- Tensor field design settings -->
+    <fieldset id="panel-exampleTensor" class="mode-panel hidden">
+      <label>Min spacing (px) <input type="number" id="tensorSpacingMin" value="11" min="4" max="120"></label>
+      <label>Spacing divisor <input type="number" id="tensorSpacingDiv" value="10" min="1" max="80"></label>
+      <label>Line width scale <input type="number" id="tensorLineWidthScale" value="0.85" step="0.05" min="0.1" max="3"></label>
+      <label>Glyph length scale <input type="number" id="tensorGlyphScale" value="0.15" step="0.05" min="0.05" max="1.5"></label>
+      <label>Angle drift (rad per px) <input type="number" id="tensorAngleDrift" value="0.0335" step="0.0005" min="0" max="0.05"></label>
+      <label>Angle separation (°) <input type="number" id="tensorAngleSeparation" value="91" step="1" min="0" max="180"></label>
     </fieldset>
 
     <fieldset>
@@ -137,7 +412,10 @@
   </div>
 
   <div class="panel" style="display:grid; grid-template-rows:1fr auto;">
-    <canvas id="c" width="1280" height="900"></canvas>
+    <div class="canvas-stage">
+      <canvas id="c" width="1280" height="900"></canvas>
+      <canvas id="overlay" width="1280" height="900"></canvas>
+    </div>
     <div class="hint">Auto‑run re-renders after tweaks; toggle it off for heavy settings.</div>
   </div>
 </div>
