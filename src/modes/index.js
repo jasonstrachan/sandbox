@@ -1,4 +1,5 @@
 import { runHatch } from './hatch.js';
+import { runHatchShear } from './hatchShear.js';
 import { runContours } from './contours.js';
 import { runFlow } from './flow.js';
 import { runGuidedFlow } from './guided.js';
@@ -6,7 +7,8 @@ import { runSkinFlow } from './skinFlow.js';
 import { runClippedFlow } from './clipFlow.js';
 import { runNoiseFlow } from './noiseFlow.js';
 import { runNoiseDashedFlow } from './noiseDashedFlow.js';
-import { runStippleDots, runStippleDashes } from './stipple.js';
+import { runStippleDots } from './stippleDots.js';
+import { runStippleDashes } from './stippleDashes.js';
 import { createExampleModes } from './examples.js';
 import { runNet } from './net.js';
 import { runHanddrawnCircles } from './handdrawnCircles.js';
@@ -20,10 +22,12 @@ import { runInkRibbons } from './inkRibbons.js';
 import { runExpressiveBrush } from './expressiveBrush.js';
 import { runExpressivePixelBrush } from './expressivePixelBrush.js';
 import { runAsciiFill } from './asciiFill.js';
+import { runTvPixelNoise } from './tvPixelNoise.js';
 
 export function createModes() {
   return {
     hatch: (deps) => runHatch(deps),
+    hatchShear: (deps) => runHatchShear(deps),
     net: (deps) => runNet(deps),
     contours: (deps) => runContours(deps),
     flow: (deps) => runFlow(deps),
@@ -45,6 +49,7 @@ export function createModes() {
     expressiveBrush: (deps) => runExpressiveBrush(deps),
     pixelatedBrush: (deps) => runExpressivePixelBrush(deps),
     asciiFill: (deps) => runAsciiFill(deps),
+    tvPixelNoise: (deps) => runTvPixelNoise(deps),
     ...createExampleModes(),
   };
 }

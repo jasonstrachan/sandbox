@@ -36,8 +36,80 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 const overlayCanvas = document.getElementById('overlay');
 const overlayCtx = overlayCanvas.getContext('2d');
+const canvasStage = document.querySelector('.canvas-stage');
+
+const view = {
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+  minScale: 0.25,
+  maxScale: 6,
+};
+
+const zoomIndicator = document.createElement('div');
+zoomIndicator.className = 'zoom-indicator';
+zoomIndicator.textContent = '100%';
+if (canvasStage) {
+  canvasStage.appendChild(zoomIndicator);
+}
 
 const lockedLayers = [];
+
+function updateZoomIndicator() {
+  if (!zoomIndicator) return;
+  zoomIndicator.textContent = `${Math.round(view.scale * 100)}%`;
+}
+
+function applyViewTransform() {
+  const transform = `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`;
+  canvas.style.transform = transform;
+  overlayCanvas.style.transform = transform;
+  updateZoomIndicator();
+}
+
+function setZoom(nextScale, pivotX, pivotY) {
+  const targetScale = clamp(nextScale, view.minScale, view.maxScale);
+  const stageRect = canvasStage?.getBoundingClientRect();
+  if (!stageRect) return;
+
+  const currentScale = view.scale;
+  const logicalX = (pivotX - view.offsetX) / currentScale;
+  const logicalY = (pivotY - view.offsetY) / currentScale;
+
+  view.scale = targetScale;
+  view.offsetX = pivotX - logicalX * view.scale;
+  view.offsetY = pivotY - logicalY * view.scale;
+
+  applyViewTransform();
+}
+
+function resetZoom() {
+  view.scale = 1;
+  view.offsetX = 0;
+  view.offsetY = 0;
+  applyViewTransform();
+}
+
+function handleWheel(event) {
+  if (!canvasStage) return;
+  const rect = canvasStage.getBoundingClientRect();
+  const pivotX = event.clientX - rect.left;
+  const pivotY = event.clientY - rect.top;
+  const zoomFactor = Math.exp((-event.deltaY) * 0.0012);
+  const nextScale = view.scale * zoomFactor;
+  setZoom(nextScale, pivotX, pivotY);
+  event.preventDefault();
+}
+
+if (canvasStage) {
+  canvasStage.addEventListener('wheel', handleWheel, { passive: false });
+  canvasStage.addEventListener('dblclick', (event) => {
+    if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+    resetZoom();
+  });
+}
+
+applyViewTransform();
 
 const controls = mapControls([
   'controls',
@@ -55,6 +127,14 @@ const controls = mapControls([
   'hCrossSize',
   'hShearSegments',
   'hShearOffset',
+  'hsSpace',
+  'hsLW',
+  'hsSpacingJitter',
+  'hsOrganic',
+  'hsShearSegments',
+  'hsShearOffset',
+  'hsColorA',
+  'hsColorB',
   'cGap',
   'cStep',
   'isoGlowStep',
@@ -224,6 +304,12 @@ const controls = mapControls([
   'asciiJitter',
   'asciiAngle',
   'asciiCharset',
+  'tvPixelSize',
+  'tvPixelJitter',
+  'tvNoiseContrast',
+  'tvColorBleed',
+  'tvScanlineStrength',
+  'tvNoiseSeed',
 ]);
 
 const controlSettings = createControlSettingsManager(controls);
@@ -231,6 +317,7 @@ controlSettings.applyToControls();
 
 const panels = {
   hatch: document.getElementById('panel-hatch'),
+  hatchShear: document.getElementById('panel-hatchShear'),
   net: document.getElementById('panel-net'),
   contours: document.getElementById('panel-contours'),
   isolineGlow: document.getElementById('panel-isolineGlow'),
@@ -239,6 +326,7 @@ const panels = {
   expressiveBrush: document.getElementById('panel-expressiveBrush'),
   pixelatedBrush: document.getElementById('panel-pixelatedBrush'),
   asciiFill: document.getElementById('panel-asciiFill'),
+  tvPixelNoise: document.getElementById('panel-tvPixelNoise'),
   flow: document.getElementById('panel-flow'),
   guided: document.getElementById('panel-guided'),
   skinFlow: document.getElementById('panel-skinFlow'),
@@ -1039,12 +1127,15 @@ function drawLockedLayers(targetCtx) {
 }
 
 function canvasPoint(event) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const stageRect = canvasStage?.getBoundingClientRect();
+  if (!stageRect) {
+    return { x: event.offsetX, y: event.offsetY };
+  }
+  const screenX = event.clientX - stageRect.left;
+  const screenY = event.clientY - stageRect.top;
   return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY,
+    x: (screenX - view.offsetX) / view.scale,
+    y: (screenY - view.offsetY) / view.scale,
   };
 }
 

@@ -1,22 +1,26 @@
 import { bbox, pointInPoly } from '../utils/geometry.js';
 
-export function runHatch({ canvas, ctx, state, controls, helpers }) {
+export function runHatch(deps) {
+  const { controls, helpers } = deps;
   if (!helpers.ensureClosed()) return;
-  helpers.prepareRender();
+  const settings = readHatchSettings(controls);
+  renderHatch(deps, settings);
+}
 
-  const angle = (Number(controls.hAngle.value) || 0) * Math.PI / 180;
-  const spacing = Math.max(2, Number(controls.hSpace.value) || 0);
-  const lineWidth = Number(controls.hLW.value) || 1;
-  const cross = controls.hCross.checked;
-  const rawHighlightScale = controls.hCrossSize ? Number(controls.hCrossSize.value) : 1.05;
-  const highlightScale = Number.isFinite(rawHighlightScale) ? rawHighlightScale : 1.05;
-  const color = controls.color?.value || '#000000';
-  const rawOrganic = controls.hOrganic ? Number(controls.hOrganic.value) : 0.75;
-  const organic = clamp01(Number.isFinite(rawOrganic) ? rawOrganic : 0.75);
-  const rawSegments = controls.hShearSegments ? Number(controls.hShearSegments.value) : 0;
-  const shearSegments = clampInt(Number.isFinite(rawSegments) ? rawSegments : 0, 0, 6);
-  const rawOffset = controls.hShearOffset ? Number(controls.hShearOffset.value) : 0;
-  const shearOffset = Math.max(0, Number.isFinite(rawOffset) ? rawOffset : 0);
+export function renderHatch({ canvas, ctx, state, helpers }, rawSettings) {
+  const angle = Number.isFinite(rawSettings?.angleRad) ? rawSettings.angleRad : 0;
+  const spacing = Math.max(2, Number.isFinite(rawSettings?.spacing) ? rawSettings.spacing : 0);
+  const lineWidth = Number.isFinite(rawSettings?.lineWidth) ? rawSettings.lineWidth : 1;
+  const cross = Boolean(rawSettings?.cross);
+  const highlightScale = Number.isFinite(rawSettings?.highlightScale) ? rawSettings.highlightScale : 1.05;
+  const color = typeof rawSettings?.color === 'string' && rawSettings.color.length
+    ? rawSettings.color
+    : '#000000';
+  const organic = clamp01(Number.isFinite(rawSettings?.organic) ? rawSettings.organic : 0.75);
+  const shearSegments = clampInt(Number.isFinite(rawSettings?.shearSegments) ? rawSettings.shearSegments : 0, 0, 6);
+  const shearOffset = Math.max(0, Number.isFinite(rawSettings?.shearOffset) ? rawSettings.shearOffset : 0);
+
+  helpers.prepareRender();
 
   ctx.save();
   helpers.tracePolygonPath();
@@ -31,17 +35,28 @@ export function runHatch({ canvas, ctx, state, controls, helpers }) {
   const cx = (bounds.minx + bounds.maxx) / 2;
   const cy = (bounds.miny + bounds.maxy) / 2;
 
-  const context = {
+  const baseContext = {
     startY: bounds.miny - pad,
     endY: bounds.maxy + pad,
     rangeY: Math.max(1, bounds.maxy - bounds.miny + pad * 2),
     segmentStep: Math.max(6, spacing * 0.35),
     cx,
     cy,
+    spacing,
+  };
+
+  const contextMain = {
+    ...baseContext,
     shear: createShearInfo({
       segments: shearSegments,
       offset: shearOffset,
+      minAxis: bounds.miny,
+      maxAxis: bounds.maxy,
     }),
+  };
+  const contextCross = {
+    ...baseContext,
+    shear: null,
   };
 
   const baseSeed = hashPoints(state.pts);
@@ -51,11 +66,11 @@ export function runHatch({ canvas, ctx, state, controls, helpers }) {
     bounds,
     pad,
     rng: createRng(baseSeed ^ 0x9e3779b9 ^ (Math.floor(angle * 1000) >>> 0)),
-    context,
+    context: contextMain,
     organic,
   });
 
-  drawLineSet(ctx, mainSet, context, lineWidth);
+  drawLineSet(ctx, mainSet, contextMain, lineWidth);
 
   if (cross) {
     const crossAngle = angle + Math.PI / 2;
@@ -65,22 +80,52 @@ export function runHatch({ canvas, ctx, state, controls, helpers }) {
       bounds,
       pad,
       rng: createRng(baseSeed ^ 0x51633e2d ^ (Math.floor(crossAngle * 873) >>> 0)),
-      context,
+      context: contextCross,
       organic,
     });
 
-    drawLineSet(ctx, crossSet, context, lineWidth);
+    drawLineSet(ctx, crossSet, contextCross, lineWidth);
     drawCrossHighlights(ctx, mainSet, crossSet, {
       color,
       lineWidth,
       polygon: state.pts,
       bounds,
-      context,
+      contextA: contextMain,
+      contextB: contextCross,
       highlightScale,
     });
   }
 
   ctx.restore();
+}
+
+function readHatchSettings(controls) {
+  const angleDeg = readNumber(controls?.hAngle?.value, 0);
+  const spacing = Math.max(2, readNumber(controls?.hSpace?.value, 0));
+  const lineWidth = readNumber(controls?.hLW?.value, 1);
+  const cross = Boolean(controls?.hCross?.checked);
+  const highlightScaleRaw = readNumber(controls?.hCrossSize?.value, 1.05);
+  const organicRaw = readNumber(controls?.hOrganic?.value, 0.75);
+  const segmentsRaw = readNumber(controls?.hShearSegments?.value, 0);
+  const offsetRaw = readNumber(controls?.hShearOffset?.value, 0);
+  const color = controls?.color?.value || '#000000';
+
+  return {
+    angleRad: angleDeg * Math.PI / 180,
+    spacing,
+    lineWidth,
+    cross,
+    highlightScale: Number.isFinite(highlightScaleRaw) ? highlightScaleRaw : 1.05,
+    color,
+    organic: clamp01(Number.isFinite(organicRaw) ? organicRaw : 0.75),
+    shearSegments: clampInt(Number.isFinite(segmentsRaw) ? segmentsRaw : 0, 0, 6),
+    shearOffset: Math.max(0, Number.isFinite(offsetRaw) ? offsetRaw : 0),
+  };
+}
+
+function readNumber(raw, defaultValue) {
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : defaultValue;
 }
 
 function buildLineSet({ angle, spacing, bounds, pad, rng, context, organic }) {
@@ -96,6 +141,7 @@ function buildLineSet({ angle, spacing, bounds, pad, rng, context, organic }) {
 
   while (pos <= max && guard < guardLimit) {
     const base = pos + (rng() - 0.5) * spacing * 0.75 * wobble;
+    const lineSeed = Math.max(1, Math.floor(rng() * 0xffffffff));
     const line = {
       base,
       tilt: (rng() - 0.5) * spacing * 0.45 * wobble,
@@ -107,6 +153,7 @@ function buildLineSet({ angle, spacing, bounds, pad, rng, context, organic }) {
       waveFreq2: (1.4 + rng() * 1.6) / Math.max(220, spacing * 12),
       wavePhase2: rng() * Math.PI * 2,
       weight: 1 + (rng() - 0.5) * 0.22 * (0.35 + wobble * 0.65),
+      seed: lineSeed,
     };
     line.constant = computeLineConstant(line.base, cos, sin, context.cx, context.cy);
     lines.push(line);
@@ -128,10 +175,13 @@ function buildLineSet({ angle, spacing, bounds, pad, rng, context, organic }) {
       waveFreq2: 1,
       wavePhase2: 0,
       weight: 1,
+      seed: 0xa3617d29,
     };
     fallback.constant = computeLineConstant(fallback.base, cos, sin, context.cx, context.cy);
     lines.push(fallback);
   }
+
+  assignLineShearSegments(lines, context, context.shear);
 
   return { angle, cos, sin, lines };
 }
@@ -147,25 +197,48 @@ function drawLineSet(ctx, set, context, baseLineWidth) {
   const step = context.segmentStep;
 
   for (const line of set.lines) {
+    const segments = line.shearSegments && line.shearSegments.length
+      ? line.shearSegments
+      : [{
+          start: startY,
+          end: endY,
+          startShift: 0,
+          endShift: 0,
+          jitterAmp: 0,
+          jitterFreq: 1,
+          jitterPhase: 0,
+        }];
+
     ctx.lineWidth = Math.max(0.2, baseLineWidth * line.weight);
-    ctx.beginPath();
-    let first = true;
-    let y = startY;
-    while (y <= endY) {
-      const x = evalLineLocalX(line, y, context);
-      if (first) {
-        ctx.moveTo(x, y);
-        first = false;
-      } else {
-        ctx.lineTo(x, y);
+    for (const segment of segments) {
+      const segStart = Math.max(segment.start, startY);
+      const segEnd = Math.min(segment.end, endY);
+      if (segStart >= segEnd) continue;
+
+      ctx.beginPath();
+      let first = true;
+      let y = segStart;
+      while (y <= segEnd) {
+        const x = evalLineLocalX(line, y, context);
+        const shift = getLineShearShift(line, y);
+        const drawX = x + shift;
+        if (first) {
+          ctx.moveTo(drawX, y);
+          first = false;
+        } else {
+          ctx.lineTo(drawX, y);
+        }
+        y += step;
       }
-      y += step;
+      if (y - step < segEnd) {
+        const xEnd = evalLineLocalX(line, segEnd, context);
+        const shiftEnd = getLineShearShift(line, segEnd);
+        ctx.lineTo(xEnd + shiftEnd, segEnd);
+      }
+      if (!first) {
+        ctx.stroke();
+      }
     }
-    if (y - step < endY) {
-      const xEnd = evalLineLocalX(line, endY, context);
-      ctx.lineTo(xEnd, endY);
-    }
-    ctx.stroke();
   }
 
   ctx.restore();
@@ -195,6 +268,8 @@ function computeIntersections(setA, setB, options) {
   const results = [];
   const bounds = options.bounds;
   const margin = Math.max(6, (options.lineWidth || 1) * 4);
+  const contextA = options.contextA;
+  const contextB = options.contextB || contextA;
   for (const lineA of setA.lines) {
     for (const lineB of setB.lines) {
       const det = setA.cos * setB.sin - setA.sin * setB.cos;
@@ -211,12 +286,14 @@ function computeIntersections(setA, setB, options) {
       }
       if (!pointInPoly(px, py, options.polygon)) continue;
 
-      const localA = toLocal(px, py, setA.angle, options.context.cx, options.context.cy);
-      const localB = toLocal(px, py, setB.angle, options.context.cx, options.context.cy);
-      const adjAx = evalLineLocalX(lineA, localA.y, options.context);
-      const adjBx = evalLineLocalX(lineB, localB.y, options.context);
-      const worldA = toWorld(adjAx, localA.y, setA.angle, options.context.cx, options.context.cy);
-      const worldB = toWorld(adjBx, localB.y, setB.angle, options.context.cx, options.context.cy);
+      const localA = toLocal(px, py, setA.angle, contextA.cx, contextA.cy);
+      const localB = toLocal(px, py, setB.angle, contextB.cx, contextB.cy);
+      const adjAx = evalLineLocalX(lineA, localA.y, contextA);
+      const adjBx = evalLineLocalX(lineB, localB.y, contextB);
+      const shiftA = getLineShearShift(lineA, localA.y);
+      const shiftB = getLineShearShift(lineB, localB.y);
+      const worldA = toWorld(adjAx + shiftA, localA.y, setA.angle, contextA.cx, contextA.cy);
+      const worldB = toWorld(adjBx + shiftB, localB.y, setB.angle, contextB.cx, contextB.cy);
       const ix = (worldA.x + worldB.x) * 0.5;
       const iy = (worldA.y + worldB.y) * 0.5;
       results.push({
@@ -237,8 +314,7 @@ function evalLineLocalX(line, y, context) {
   const bow = line.bow * (centered * centered - 0.25) * 2.4;
   const wave1 = Math.sin(y * line.waveFreq + line.wavePhase) * line.waveAmp;
   const wave2 = Math.sin(y * line.waveFreq2 + line.wavePhase2) * line.waveAmp2;
-  const shearOffset = computeShearOffset(y, context);
-  return line.base + lean + bow + wave1 + wave2 + shearOffset;
+  return line.base + lean + bow + wave1 + wave2;
 }
 
 function computeLineConstant(base, cos, sin, cx, cy) {
@@ -303,22 +379,92 @@ function clampInt(value, min, max) {
   return rounded;
 }
 
-function createShearInfo({ segments, offset }) {
+function createShearInfo({ segments, offset, minAxis, maxAxis }) {
   const segCount = clampInt(segments ?? 0, 0, 6);
   const shearOffset = Math.max(0, offset ?? 0);
   if (segCount <= 0 || shearOffset <= 0) return null;
+  const min = Number.isFinite(minAxis) ? minAxis : null;
+  const max = Number.isFinite(maxAxis) ? maxAxis : null;
+  if (min == null || max == null || max <= min) return null;
   return {
     segments: segCount,
     offset: shearOffset,
+    min,
+    max,
   };
 }
 
-function computeShearOffset(y, context) {
-  const shear = context?.shear;
-  if (!shear) return 0;
-  const clampedSegs = Math.max(1, shear.segments);
-  const normalized = (y - context.startY) / context.rangeY;
-  const clamped = Math.max(0, Math.min(0.999999, normalized));
-  const bandIndex = Math.floor(clamped * clampedSegs);
-  return bandIndex * shear.offset;
+function assignLineShearSegments(lines, context, shear) {
+  if (!Array.isArray(lines) || !lines.length) return;
+  if (!shear) {
+    for (const line of lines) {
+      delete line.shearSegments;
+      delete line.shearBounds;
+    }
+    return;
+  }
+
+  const span = shear.max - shear.min;
+  if (!(span > 0)) {
+    for (const line of lines) {
+      delete line.shearSegments;
+      delete line.shearBounds;
+    }
+    return;
+  }
+
+  const segCount = Math.max(1, shear.segments);
+  const baseHeight = span / segCount;
+  const spacingHint = context?.spacing ?? 0;
+  const baseJitter = Math.min(0.5, Math.max(0.05, spacingHint * 0.05));
+
+  for (const line of lines) {
+    const rng = createRng((line.seed ?? 0x9e3779b9) ^ 0x7f4a7c15);
+    const segments = [];
+    let currentShift = 0;
+    for (let i = 0; i < segCount; i++) {
+      const segStart = shear.min + baseHeight * i;
+      const segEnd = i === segCount - 1 ? shear.max : segStart + baseHeight;
+      const strength = 0.85 + rng() * 0.3;
+      const deltaShift = shear.offset * strength;
+      const nextShift = currentShift + deltaShift;
+      const jitterAmp = baseJitter * (0.35 + rng() * 0.45);
+      const jitterFreq = 0.3 + rng() * 0.8;
+      const jitterPhase = rng() * Math.PI * 2;
+      segments.push({
+        start: segStart,
+        end: segEnd,
+        startShift: currentShift,
+        endShift: nextShift,
+        jitterAmp,
+        jitterFreq,
+        jitterPhase,
+      });
+      currentShift = nextShift;
+    }
+
+    line.shearSegments = segments;
+    line.shearBounds = { min: shear.min, max: shear.max };
+  }
+}
+
+function getLineShearShift(line, y) {
+  const segments = line?.shearSegments;
+  if (!segments) return 0;
+  const bounds = line?.shearBounds;
+  if (!bounds) return 0;
+  if (y < bounds.min || y > bounds.max) return 0;
+  const CUT_WIDTH = 1;
+  for (const segment of segments) {
+    if (y >= segment.start && y <= segment.end) {
+      const cutBoundary = Math.min(segment.end, segment.start + CUT_WIDTH);
+      const baseShift = y >= cutBoundary ? segment.endShift : segment.startShift;
+      const span = Math.max(segment.end - segment.start, 1e-4);
+      const waveT = Math.max(0, Math.min(1, (y - segment.start) / span));
+      const wave = Math.sin((waveT * segment.jitterFreq * Math.PI * 2) + segment.jitterPhase);
+      const mix = y < cutBoundary ? 0 : Math.max(0, Math.min(1, (y - cutBoundary) / (span - (cutBoundary - segment.start) + 1e-4)));
+      return baseShift + wave * segment.jitterAmp * mix;
+    }
+  }
+  return 0;
 }

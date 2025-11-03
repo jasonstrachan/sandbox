@@ -24,9 +24,23 @@
   .hint{ color:var(--muted); font-size:12px; }
   .hidden { display:none; }
   .canvas-stage { position:relative; width:100%; height:100%; border-radius:14px; overflow:hidden; }
-  .canvas-stage canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .canvas-stage canvas { position:absolute; inset:0; width:100%; height:100%; display:block; transform-origin:0 0; }
   #c { background:#0a0a0e; border:1px solid var(--line); border-radius:14px; }
   #overlay { pointer-events:none; background:transparent; border:none; }
+  .zoom-indicator {
+    position:absolute;
+    right:12px;
+    bottom:12px;
+    padding:4px 8px;
+    border-radius:8px;
+    background:rgba(10,12,16,0.72);
+    color:var(--ink);
+    font-size:12px;
+    letter-spacing:0.2px;
+    pointer-events:none;
+    backdrop-filter:blur(4px);
+    border:1px solid rgba(44,52,66,0.6);
+  }
 </style>
 </head>
 <body>
@@ -49,6 +63,7 @@
       <label style="grid-template-columns:auto 1fr auto; gap:8px; align-items:center;">
         <select id="mode">
           <option value="hatch" data-category="patterns">Hatch</option>
+          <option value="hatchShear" data-category="patterns">Hatch Shear</option>
           <option value="net" data-category="patterns">Net</option>
           <option value="contours" data-category="lines">Contours</option>
           <option value="isolineGlow" data-category="lines">Isoline Glow</option>
@@ -60,6 +75,7 @@
           <option value="expressiveBrush" data-category="brushes">Expressive Brush</option>
           <option value="pixelatedBrush" data-category="brushes">Pixelated Brush</option>
           <option value="asciiFill" data-category="patterns">Ascii Fill</option>
+          <option value="tvPixelNoise" data-category="patterns">TV Pixel Noise</option>
           <option value="noise" data-category="lines">Noise Flow</option>
           <option value="noiseDashed" data-category="lines">Noise Dashed</option>
           <option value="stippleDots" data-category="points patterns">Stipple Dots</option>
@@ -96,6 +112,18 @@
       <label>Highlight size <input type="range" id="hCrossSize" min="0.2" max="3" step="0.05" value="1.05"></label>
       <label>Shear segments <input type="range" id="hShearSegments" min="0" max="6" step="1" value="0"></label>
       <label>Shear offset (px) <input type="range" id="hShearOffset" min="0" max="20" step="1" value="6"></label>
+    </fieldset>
+
+    <!-- Hatch shear settings -->
+    <fieldset id="panel-hatchShear" class="mode-panel hidden">
+      <label>Primary color <input type="color" id="hsColorA" value="#111111"></label>
+      <label>Secondary color <input type="color" id="hsColorB" value="#2e2e2e"></label>
+      <label>Spacing (px) <input type="range" id="hsSpace" min="5" max="80" step="1" value="20"></label>
+      <label>Line width (px) <input type="range" id="hsLW" min="0.2" max="6" step="0.1" value="1"></label>
+      <label>Spacing jitter <input type="range" id="hsSpacingJitter" min="0" max="1" step="0.05" value="0.35"></label>
+      <label>Organic wobble <input type="range" id="hsOrganic" min="0" max="1" step="0.05" value="0.75"></label>
+      <label>Cut segments <input type="range" id="hsShearSegments" min="1" max="20" step="1" value="3"></label>
+      <label>Offset amount (px) <input type="range" id="hsShearOffset" min="0" max="30" step="1" value="5"></label>
     </fieldset>
 
     <!-- Net settings -->
@@ -219,6 +247,15 @@
       <label>Grid jitter (0–1) <input type="number" id="asciiJitter" value="0" min="0" max="1" step="0.02"></label>
       <label>Base rotation (°) <input type="number" id="asciiAngle" value="0" min="-180" max="180" step="1"></label>
       <label>Text snippets (use | separators) <input type="text" id="asciiCharset" value="WIN BIG $$$|CLAIM YOUR REWARD NOW|GUARANTEED APPROVAL TODAY" spellcheck="false"></label>
+    </fieldset>
+
+    <fieldset id="panel-tvPixelNoise" class="mode-panel hidden">
+      <label>Grain pixel size (px) <input type="number" id="tvPixelSize" value="3" min="1" max="120" step="1"></label>
+      <label>Luma jitter <input type="range" id="tvPixelJitter" min="0" max="1" step="0.05" value="0.35"></label>
+      <label>Grain contrast <input type="range" id="tvNoiseContrast" min="0.1" max="3" step="0.05" value="1"></label>
+      <label>Color variance <input type="range" id="tvColorBleed" min="0" max="1" step="0.05" value="0.22"></label>
+      <label>Row banding <input type="range" id="tvScanlineStrength" min="0" max="1" step="0.05" value="0.1"></label>
+      <label>Seed <input type="number" id="tvNoiseSeed" value="2025" step="1"></label>
     </fieldset>
 
     <!-- Flow settings -->
