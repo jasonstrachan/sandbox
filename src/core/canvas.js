@@ -1,6 +1,6 @@
 const DEFAULT_BACKGROUND = '#05060a';
 
-function getDevicePixelRatio() {
+export function getDevicePixelRatio() {
   if (typeof window === 'undefined') return 1;
   return Math.min(window.devicePixelRatio || 1, 3);
 }

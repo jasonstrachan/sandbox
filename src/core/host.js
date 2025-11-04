@@ -1,20 +1,29 @@
 import { createCanvasContext, createWebGLContext, syncOverlayCanvas } from './canvas.js';
 import { createRenderLoop } from './loop.js';
 import { createControlPanel } from './controls.js';
+import { createWebGPUContext } from './webgpu/context.js';
+import { createPRNG } from './prng.js';
 
-const STORAGE_KEY = 'sandbox-active-prototype';
+const SEED_STORAGE_KEY = 'sandbox-active-seed';
 
 export function bootstrapPrototypeHost({
   canvas,
   overlay,
-  picker,
   controlsRoot,
   metaRoot,
+  seedRoot,
   prototypes,
+  initialPrototypeId,
 }) {
-  if (!canvas || !picker) throw new Error('canvas and picker are required');
+  if (!canvas) throw new Error('canvas is required');
+  if (!Array.isArray(prototypes) || prototypes.length === 0) {
+    throw new Error('At least one prototype definition is required');
+  }
 
   const controlPanel = createControlPanel(controlsRoot);
+  const initialSeed = safeStorage('getItem', SEED_STORAGE_KEY) || generateRandomSeed();
+  const prng = createPRNG(initialSeed);
+  safeStorage('setItem', SEED_STORAGE_KEY, prng.seed);
   let renderingContext = null;
   let overlayView = null;
 
@@ -23,9 +32,15 @@ export function bootstrapPrototypeHost({
     overlay,
     ctx: null,
     gl: null,
+    prng,
+    seed: prng.seed,
+    webgpu: null,
+    webgpuError: null,
     overlayCtx: null,
+    backgroundColor: '#05060a',
     size: () => ({ width: canvas.width, height: canvas.height }),
     setBackground(color) {
+      env.backgroundColor = color;
       if (env.ctx) {
         env.ctx.fillStyle = color;
         env.ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -34,21 +49,58 @@ export function bootstrapPrototypeHost({
         const [r, g, b] = hexToRgb(color || '#000000');
         gl.clearColor(r / 255, g / 255, b / 255, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
+      } else if (env.webgpu) {
+        env.webgpu.clearColor = color;
       }
     },
     clearOverlay() {
       overlayView?.clear?.();
     },
+    rand() {
+      return prng.nextFloat();
+    },
   };
 
-  function setupContext(kind = '2d') {
+  const seedPanel = seedRoot
+    ? initSeedPanel(seedRoot, {
+        seed: env.seed,
+        onApply: (value) => applySeed(value || env.seed),
+        onRandomize: () => applySeed(generateRandomSeed()),
+      })
+    : null;
+
+  function applySeed(nextSeed) {
+    if (!nextSeed) return;
+    prng.setSeed(nextSeed);
+    env.seed = prng.seed;
+    seedPanel?.setValue?.(env.seed);
+    safeStorage('setItem', SEED_STORAGE_KEY, env.seed);
+    activePrototype?.onSeedChange?.(env.seed, env);
+  }
+
+  async function setupContext(kind = '2d') {
     renderingContext?.destroy?.();
     overlayView?.destroy?.();
+    env.webgpu = null;
+    env.webgpuError = null;
 
     if (kind.startsWith('webgl')) {
       renderingContext = createWebGLContext(canvas, { contextId: kind });
       env.gl = renderingContext.gl;
       env.ctx = null;
+    } else if (kind === 'webgpu') {
+      try {
+        renderingContext = await createWebGPUContext(canvas);
+        env.webgpu = renderingContext;
+        env.ctx = null;
+        env.gl = null;
+      } catch (error) {
+        console.warn('WebGPU init failed', error); // eslint-disable-line no-console
+        env.webgpuError = error;
+        renderingContext = createCanvasContext(canvas);
+        env.ctx = renderingContext.ctx;
+        env.gl = null;
+      }
     } else {
       renderingContext = createCanvasContext(canvas);
       env.ctx = renderingContext.ctx;
@@ -92,7 +144,7 @@ export function bootstrapPrototypeHost({
 
   let activePrototype = null;
 
-  function loadPrototype(id) {
+  async function loadPrototype(id) {
     const def = prototypes.find((proto) => proto.id === id) || prototypes[0];
     if (!def) return;
 
@@ -100,12 +152,11 @@ export function bootstrapPrototypeHost({
       activePrototype.destroy();
     }
 
-    setupContext(def.context || '2d');
+    await setupContext(def.context || '2d');
 
     env.clearOverlay();
     env.setBackground(def.background || '#05060a');
 
-    picker.value = def.id;
     updateMeta(metaRoot, def);
 
     const controls = def.controls ?? [];
@@ -113,29 +164,32 @@ export function bootstrapPrototypeHost({
       activePrototype?.onControlChange?.(key, value, env);
     });
 
+    if (def.context === 'webgpu' && !env.webgpu) {
+      renderWebGPUFallback(env, env.webgpuError);
+      activePrototype = createFallbackPrototype();
+      return;
+    }
+
     const instance = def.create(env);
     activePrototype = instance;
+    activePrototype?.onSeedChange?.(env.seed, env);
 
     if (!loopStarted) {
       loop.start();
       loopStarted = true;
     }
-
-    safeStorage('setItem', STORAGE_KEY, def.id);
   }
 
   let loopStarted = false;
 
-  picker.innerHTML = prototypes
-    .map((proto) => `<option value="${proto.id}">${proto.title}</option>`)
-    .join('');
-
-  picker.addEventListener('change', (event) => {
-    loadPrototype(event.target.value);
-  });
-
-  const initialId = safeStorage('getItem', STORAGE_KEY) || prototypes[0]?.id;
-  if (initialId) loadPrototype(initialId);
+  const targetPrototypeId = initialPrototypeId || prototypes[0]?.id;
+  if (targetPrototypeId) {
+    loadPrototype(targetPrototypeId).catch((error) => {
+      console.error('Failed to load initial prototype', error); // eslint-disable-line no-console
+    });
+  } else {
+    console.warn('No prototypes registered; nothing to load.'); // eslint-disable-line no-console
+  }
 
   return {
     loadPrototype,
@@ -196,4 +250,81 @@ function updateMeta(metaRoot, def) {
     });
     metaRoot.appendChild(list);
   }
+}
+
+function initSeedPanel(root, { seed, onApply, onRandomize }) {
+  root.innerHTML = '';
+
+  const title = document.createElement('h3');
+  title.textContent = 'Deterministic Seed';
+  root.appendChild(title);
+
+  const row = document.createElement('div');
+  row.className = 'seed-row';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.value = seed;
+  input.placeholder = 'Enter seed…';
+
+  const applyButton = document.createElement('button');
+  applyButton.type = 'button';
+  applyButton.textContent = 'Apply';
+
+  applyButton.addEventListener('click', () => onApply?.(input.value.trim()));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      onApply?.(input.value.trim());
+    }
+  });
+
+  row.appendChild(input);
+  row.appendChild(applyButton);
+  root.appendChild(row);
+
+  const randomButton = document.createElement('button');
+  randomButton.type = 'button';
+  randomButton.textContent = 'Randomize';
+  randomButton.addEventListener('click', () => onRandomize?.());
+  root.appendChild(randomButton);
+
+  return {
+    setValue(value) {
+      input.value = value;
+    },
+  };
+}
+
+function generateRandomSeed() {
+  if (typeof crypto !== 'undefined' && crypto?.getRandomValues) {
+    const data = new Uint32Array(2);
+    crypto.getRandomValues(data);
+    return `${data[0].toString(16).padStart(8, '0')}${data[1].toString(16).padStart(8, '0')}`;
+  }
+  return `${Date.now().toString(16)}${Math.floor(Math.random() * 1e9).toString(16)}`;
+}
+
+function renderWebGPUFallback(env, error) {
+  if (!env?.ctx) return;
+  const { width, height } = env.size();
+  env.ctx.fillStyle = '#05060a';
+  env.ctx.fillRect(0, 0, width, height);
+  env.ctx.fillStyle = '#ffffff';
+  env.ctx.font = '16px "IBM Plex Mono", Menlo, monospace';
+  env.ctx.textAlign = 'left';
+  env.ctx.textBaseline = 'top';
+  env.ctx.fillText('WebGPU is not available on this device/browser.', 24, height / 2 - 24);
+  if (error?.message) {
+    env.ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    env.ctx.fillText(error.message, 24, height / 2 + 4);
+  }
+}
+
+function createFallbackPrototype() {
+  return {
+    update() {},
+    destroy() {},
+  };
 }

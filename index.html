@@ -112,6 +112,32 @@
         color: rgba(230, 240, 255, 0.7);
         font-style: italic;
       }
+      .seed-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .seed-panel h3 {
+        margin: 0;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(230, 240, 255, 0.7);
+      }
+      .seed-row {
+        display: flex;
+        gap: 8px;
+      }
+      .seed-row input {
+        flex: 1;
+      }
+      .seed-row button {
+        flex: 0 0 auto;
+        min-width: 84px;
+      }
       @media (max-width: 960px) {
         .app-shell {
           grid-template-columns: 1fr;
@@ -126,11 +152,8 @@
     <div class="app-shell">
       <aside class="panel">
         <h1>Sandbox Base</h1>
-        <label>
-          <span style="display:block; font-size:13px; margin-bottom:4px; color:rgba(230,240,255,0.7);">Prototype</span>
-          <select id="prototype-picker"></select>
-        </label>
         <section class="meta-panel" id="prototype-meta"></section>
+        <section id="seed-controls" class="seed-panel"></section>
         <section id="prototype-controls"></section>
       </aside>
       <section class="stage">
