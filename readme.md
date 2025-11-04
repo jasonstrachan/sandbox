@@ -1,12 +1,36 @@
-# Polygon Drawing Sandbox
+# Sandbox Base
 
-Interactive canvas demo with multiple polygon fill modes.
+This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps the tooling (Vite + vanilla JS) but strips out previous experiments so every new idea starts from the same clean slate.
 
-## Getting Started
+## Dev workflow
 
-- Install dependencies: `npm install`
-- Run the dev server: `npm run dev`
-- Build for deployment: `npm run build`
-- Preview the production build locally: `npm run preview`
+1. Install deps once: `npm install`
+2. Run locally: `npm run dev`
+3. Build for static hosting: `npm run build`
 
-The production-ready assets are emitted to `dist/` and can be deployed to your dev environment as-is.
+## Creating a new prototype branch
+
+1. Make sure the base is up to date:
+   ```bash
+   git switch main
+   git pull
+   ```
+2. Spin up a branch for your idea:
+   ```bash
+   git switch -c proto/<idea>
+   ```
+3. Edit files in `src/` (or clone the template in `src/prototypes`). Keep commits local to that branch.
+4. Push/publish when you want to share:
+   ```bash
+   git push -u origin proto/<idea>
+   ```
+5. When the experiment is done, tag it or delete the branch—no merges back to `main` required.
+
+## Runtime pieces
+
+- `src/core/host.js` – wires canvases, the control panel, pointer events, and the RAF loop.
+- `src/core/canvas.js` – DPI-aware helpers for 2D and WebGL contexts.
+- `src/core/controls.js` – minimal UI renderer for sliders, colors, selects.
+- `src/prototypes/*.js` – drop-in modules that expose `{ id, title, controls, create() }`.
+
+See `docs/prototypes.md` for a deeper breakdown of the contract between the host and each prototype.
