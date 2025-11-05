@@ -95,3 +95,31 @@ export function createWebGLContext(
     },
   };
 }
+
+export function createWebGPUContext(canvas) {
+  if (!canvas) throw new Error('Canvas element is required');
+
+  // Don't create a context yet - WebGPU needs async initialization
+  // Just return a placeholder that will be configured later
+  const resize = () => {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = getDevicePixelRatio();
+    const width = Math.max(1, Math.floor(rect.width * dpr));
+    const height = Math.max(1, Math.floor(rect.height * dpr));
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+  };
+
+  resize();
+  window.addEventListener('resize', resize);
+
+  return {
+    gpuContext: null, // Will be set by the prototype
+    resize,
+    destroy() {
+      window.removeEventListener('resize', resize);
+    },
+  };
+}

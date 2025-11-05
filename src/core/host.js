@@ -1,4 +1,4 @@
-import { createCanvasContext, createWebGLContext, syncOverlayCanvas } from './canvas.js';
+import { createCanvasContext, createWebGLContext, createWebGPUContext, syncOverlayCanvas } from './canvas.js';
 import { createRenderLoop } from './loop.js';
 import { createControlPanel } from './controls.js';
 
@@ -23,6 +23,7 @@ export function bootstrapPrototypeHost({
     overlay,
     ctx: null,
     gl: null,
+    gpuContext: null,
     overlayCtx: null,
     size: () => ({ width: canvas.width, height: canvas.height }),
     setBackground(color) {
@@ -45,14 +46,21 @@ export function bootstrapPrototypeHost({
     renderingContext?.destroy?.();
     overlayView?.destroy?.();
 
-    if (kind.startsWith('webgl')) {
+    if (kind === 'webgpu') {
+      renderingContext = createWebGPUContext(canvas);
+      env.gpuContext = renderingContext.gpuContext;
+      env.gl = null;
+      env.ctx = null;
+    } else if (kind.startsWith('webgl')) {
       renderingContext = createWebGLContext(canvas, { contextId: kind });
       env.gl = renderingContext.gl;
       env.ctx = null;
+      env.gpuContext = null;
     } else {
       renderingContext = createCanvasContext(canvas);
       env.ctx = renderingContext.ctx;
       env.gl = null;
+      env.gpuContext = null;
     }
 
     if (overlay) {
