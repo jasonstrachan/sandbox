@@ -1,4 +1,4 @@
-# Sandbox Base
+# Stratified Lab
 
 This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps the tooling (Vite + vanilla JS) but strips out previous experiments so every new idea starts from the same clean slate.
 
@@ -7,6 +7,7 @@ This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps
 1. Install deps once: `npm install`
 2. Run locally: `npm run dev`
 3. Build for static hosting: `npm run build`
+4. Optional WGSL lint: `npm run lint:wgsl` (requires `wgsl_analyzer` or `naga` on your PATH)
 
 ## Creating a new prototype branch
 
@@ -34,3 +35,20 @@ This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps
 - `src/prototypes/*.js` – drop-in modules that expose `{ id, title, controls, create() }`.
 
 See `docs/prototypes.md` for a deeper breakdown of the contract between the host and each prototype.
+
+## Stratified prototype cheat sheet
+
+- **WebGPU baseline**: Chrome 129+ or Edge Canary with `shader-f16`, `timestamp-query`, and `texture-compression-bc` available. The host automatically requests those optional features; fallback text appears if the adapter is missing any requirements.
+- **Controls**: everything in the picker persists between sessions (spawn count, camera bias, strata tuning, etc.). Developer-only sliders remain inside the collapsible “Developer” panel so public demos can hide them entirely.
+- **Seed panel**: copy/reset/randomize buttons plus “Load Manifest” for piping a previously exported JSON back into the running prototype. Loading a manifest reapplies the seed and all persisted controls.
+- **HUD + hotkeys**: overlay now lists FPS, sim timings, VRAM estimates, contact counts, and active vs. settled artifacts. Hotkeys—Space toggles pause, `S` toggles slow motion, `B` force-bakes strata, `D` dumps the last contact batch to the console.
+- **Exports**:
+  - PNG captures include a manifest sidecar describing the seed, control snapshot, texture sizes, shader hashes, and WebGPU feature set.
+  - WebM capture prefers WebCodecs + VP9 (ImageBitmap → `VideoEncoder` → custom WebM muxer). When WebCodecs aren’t available, the code falls back to `MediaRecorder`. Each run auto-stops after ~8 seconds and writes the same manifest format as PNG.
+- **Autosave**: every persisted control (spawn count, gravity, damping, rest threshold, etc.) is mirrored into `localStorage`, so dev tweaks survive refreshes without manually editing defaults.
+- **Pool guard**: the overlay shows `Pool <active>/<max>`; when it reads `— paused`, spawn waves are suppressed because the artifact pool is full. Use the dev-only `Recycle Pool` toggle or raise `maxArtifacts` to free space.
+- **Validation**: see `docs/validation-report.md` for the scenario checklist (single-box drop, mixed rain, long-haul, and 4K/120 Hz profiling). Populate that file with your local metrics + manifests before sharing captures outside the team.
+
+## CI notes
+
+- `npm run lint` runs both ESLint and WGSL validation. Make sure either [`wgsl_analyzer`](https://github.com/wgsl-analyzer/wgsl-analyzer) or [`naga`](https://github.com/gfx-rs/naga) is installed on the CI runner before invoking the script so shader validation does not silently downgrade to a no-op.

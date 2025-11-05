@@ -3,11 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sandbox Base</title>
+    <title>Stratified Lab</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+        font-family: 'IBM Plex Mono', 'IBM Plex Sans', system-ui, sans-serif;
         background: #05060a;
         color: #e6f0ff;
       }
@@ -34,7 +34,7 @@
       .panel {
         background: rgba(11, 12, 18, 0.9);
         border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
+        border-radius: 0;
         padding: 18px;
         display: flex;
         flex-direction: column;
@@ -48,9 +48,10 @@
       }
       select,
       input,
-      button {
-        font: inherit;
-        border-radius: 10px;
+      button,
+      label {
+        font-family: 'IBM Plex Mono', 'IBM Plex Sans', system-ui, sans-serif;
+        border-radius: 0;
         border: 1px solid rgba(255, 255, 255, 0.08);
         background: rgba(255, 255, 255, 0.05);
         color: inherit;
@@ -59,7 +60,7 @@
       }
       .stage {
         position: relative;
-        border-radius: 24px;
+        border-radius: 0;
         overflow: hidden;
         background: #020308;
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -89,21 +90,26 @@
       }
       .tag-list li {
         padding: 4px 8px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
+        border-radius: 0;
+        background: none;
+        border: none;
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.8px;
       }
       .control-row {
         display: grid;
-        grid-template-columns: 1fr 110px;
-        gap: 10px;
+        grid-template-columns: 1fr 120px;
+        gap: 6px;
         align-items: center;
-        margin-bottom: 8px;
+        margin-bottom: 4px;
+        padding: 2px 0;
+        background: none;
+        border: none;
+        border-radius: 0;
       }
       .control-row span {
-        font-size: 13px;
+        font-size: 12px;
         color: rgba(230, 240, 255, 0.8);
       }
       .control-empty {
@@ -112,12 +118,55 @@
         color: rgba(230, 240, 255, 0.7);
         font-style: italic;
       }
+      #prototype-controls input,
+      #prototype-controls select,
+      #prototype-controls button {
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 2px 0;
+        outline: none;
+      }
+      #prototype-controls input[type='range'] {
+        border-bottom: none;
+        padding: 0;
+        appearance: none;
+        background: transparent;
+        height: 18px;
+      }
+      #prototype-controls input[type='range']::-webkit-slider-runnable-track {
+        height: 2px;
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 0;
+      }
+      #prototype-controls input[type='range']::-webkit-slider-thumb {
+        appearance: none;
+        width: 12px;
+        height: 12px;
+        background: #e6f0ff;
+        border-radius: 0;
+        margin-top: -5px;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+      }
+      #prototype-controls input[type='range']::-moz-range-track {
+        height: 2px;
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 0;
+      }
+      #prototype-controls input[type='range']::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        background: #e6f0ff;
+        border: none;
+        border-radius: 0;
+        box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+      }
       .seed-panel {
         display: flex;
         flex-direction: column;
         gap: 8px;
         padding: 12px;
-        border-radius: 12px;
+        border-radius: 0;
         background: rgba(255, 255, 255, 0.03);
       }
       .seed-panel h3 {
@@ -138,6 +187,28 @@
         flex: 0 0 auto;
         min-width: 84px;
       }
+      .seed-actions-group {
+        border-radius: 0;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        padding: 8px;
+      }
+      .seed-actions-group summary {
+        cursor: pointer;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: rgba(230, 240, 255, 0.7);
+        margin-bottom: 6px;
+      }
+      .seed-actions-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .seed-action {
+        width: 100%;
+      }
       @media (max-width: 960px) {
         .app-shell {
           grid-template-columns: 1fr;
@@ -151,7 +222,7 @@
   <body>
     <div class="app-shell">
       <aside class="panel">
-        <h1>Sandbox Base</h1>
+        <h1>Stratified Lab</h1>
         <section class="meta-panel" id="prototype-meta"></section>
         <section id="seed-controls" class="seed-panel"></section>
         <section id="prototype-controls"></section>

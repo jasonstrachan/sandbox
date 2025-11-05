@@ -4,16 +4,81 @@ import { createControlPanel } from './controls.js';
 import { createWebGPUContext } from './webgpu/context.js';
 import { createPRNG } from './prng.js';
 
+/**
+ * @typedef {ReturnType<typeof createCanvasContext>} Canvas2DContext
+ * @typedef {ReturnType<typeof createWebGLContext>} WebGLContextWrapper
+ * @typedef {ReturnType<typeof syncOverlayCanvas>} OverlayView
+ * @typedef {Awaited<ReturnType<typeof createWebGPUContext>>} WebGPUContext
+ * @typedef {ReturnType<typeof createPRNG>} PRNGInstance
+ * @typedef {ReturnType<typeof createControlPanel>} ControlPanel
+ * @typedef {{
+ *   type: string,
+ *   x: number,
+ *   y: number,
+ *   buttons: number,
+ *   ctrlKey: boolean,
+ *   altKey: boolean,
+ *   shiftKey: boolean,
+ * }} PrototypePointerEvent
+ * @typedef {{
+ *   update?: (payload: { ctx: CanvasRenderingContext2D | null, overlayCtx: CanvasRenderingContext2D | null, now: number, dt: number, env: PrototypeHostEnv }) => void,
+ *   onControlChange?: (key: string, value: unknown, env: PrototypeHostEnv) => void,
+ *   onPointer?: (event: PrototypePointerEvent, env: PrototypeHostEnv) => void,
+ *   onSeedChange?: (seed: string, env: PrototypeHostEnv) => void,
+ *   onManifestImport?: (manifest: unknown, env: PrototypeHostEnv) => void,
+ *   destroy?: () => void,
+ * }} PrototypeInstance
+ * @typedef {{
+ *   id: string,
+ *   title?: string,
+ *   description?: string,
+ *   tags?: string[],
+ *   background?: string,
+ *   context?: string,
+ *   controls?: unknown[],
+ *   create: (env: PrototypeHostEnv) => PrototypeInstance,
+ * }} PrototypeDefinition
+ * @typedef {{
+ *   canvas: HTMLCanvasElement,
+ *   overlay: HTMLCanvasElement | null,
+ *   ctx: CanvasRenderingContext2D | null,
+ *   gl: (WebGLRenderingContext | WebGL2RenderingContext) | null,
+ *   prng: PRNGInstance,
+ *   seed: string,
+ *   webgpu: WebGPUContext | null,
+ *   webgpuError: unknown,
+ *   overlayCtx: CanvasRenderingContext2D | null,
+ *   backgroundColor: string,
+ *   size: () => { width: number; height: number },
+ *   setBackground: (color: string) => void,
+ *   clearOverlay: () => void,
+ *   rand: () => number,
+ *   controls: { update(key: string, value: unknown): void },
+ * }} PrototypeHostEnv
+ * @typedef {Canvas2DContext | WebGLContextWrapper | WebGPUContext} RenderingContext
+ */
+
 const SEED_STORAGE_KEY = 'sandbox-active-seed';
 
+/**
+ * @param {{
+ *   canvas: HTMLCanvasElement,
+ *   overlay?: HTMLCanvasElement | null,
+ *   controlsRoot: HTMLElement,
+ *   metaRoot?: HTMLElement | null,
+ *   seedRoot?: HTMLElement | null,
+ *   prototypes: PrototypeDefinition[],
+ *   initialPrototypeId?: string | null,
+ * }} options
+ */
 export function bootstrapPrototypeHost({
   canvas,
-  overlay,
+  overlay = null,
   controlsRoot,
-  metaRoot,
-  seedRoot,
+  metaRoot = null,
+  seedRoot = null,
   prototypes,
-  initialPrototypeId,
+  initialPrototypeId = null,
 }) {
   if (!canvas) throw new Error('canvas is required');
   if (!Array.isArray(prototypes) || prototypes.length === 0) {
@@ -24,9 +89,12 @@ export function bootstrapPrototypeHost({
   const initialSeed = safeStorage('getItem', SEED_STORAGE_KEY) || generateRandomSeed();
   const prng = createPRNG(initialSeed);
   safeStorage('setItem', SEED_STORAGE_KEY, prng.seed);
+  /** @type {RenderingContext | null} */
   let renderingContext = null;
+  /** @type {OverlayView | null} */
   let overlayView = null;
 
+  /** @type {PrototypeHostEnv} */
   const env = {
     canvas,
     overlay,
@@ -59,6 +127,11 @@ export function bootstrapPrototypeHost({
     rand() {
       return prng.nextFloat();
     },
+    controls: {
+      update(key, value) {
+        controlPanel.update?.(key, value);
+      },
+    },
   };
 
   const seedPanel = seedRoot
@@ -66,6 +139,7 @@ export function bootstrapPrototypeHost({
         seed: env.seed,
         onApply: (value) => applySeed(value || env.seed),
         onRandomize: () => applySeed(generateRandomSeed()),
+        onLoadManifest: handleManifestLoad,
       })
     : null;
 
@@ -78,6 +152,14 @@ export function bootstrapPrototypeHost({
     activePrototype?.onSeedChange?.(env.seed, env);
   }
 
+  function handleManifestLoad(manifest) {
+    if (!manifest || typeof manifest !== 'object') return;
+    if (manifest.seed) {
+      applySeed(manifest.seed);
+    }
+    activePrototype?.onManifestImport?.(manifest, env);
+  }
+
   async function setupContext(kind = '2d') {
     renderingContext?.destroy?.();
     overlayView?.destroy?.();
@@ -85,25 +167,29 @@ export function bootstrapPrototypeHost({
     env.webgpuError = null;
 
     if (kind.startsWith('webgl')) {
-      renderingContext = createWebGLContext(canvas, { contextId: kind });
-      env.gl = renderingContext.gl;
+      const webglContext = createWebGLContext(canvas, { contextId: kind });
+      renderingContext = webglContext;
+      env.gl = webglContext.gl;
       env.ctx = null;
     } else if (kind === 'webgpu') {
       try {
-        renderingContext = await createWebGPUContext(canvas);
-        env.webgpu = renderingContext;
+        const webgpuContext = await createWebGPUContext(canvas);
+        renderingContext = webgpuContext;
+        env.webgpu = webgpuContext;
         env.ctx = null;
         env.gl = null;
       } catch (error) {
-        console.warn('WebGPU init failed', error); // eslint-disable-line no-console
+        console.warn('WebGPU init failed', error);
         env.webgpuError = error;
-        renderingContext = createCanvasContext(canvas);
-        env.ctx = renderingContext.ctx;
+        const canvasContext = createCanvasContext(canvas);
+        renderingContext = canvasContext;
+        env.ctx = canvasContext.ctx;
         env.gl = null;
       }
     } else {
-      renderingContext = createCanvasContext(canvas);
-      env.ctx = renderingContext.ctx;
+      const canvasContext = createCanvasContext(canvas);
+      renderingContext = canvasContext;
+      env.ctx = canvasContext.ctx;
       env.gl = null;
     }
 
@@ -142,6 +228,7 @@ export function bootstrapPrototypeHost({
     canvas.addEventListener(type, pointerHandler);
   });
 
+  /** @type {PrototypeInstance | null} */
   let activePrototype = null;
 
   async function loadPrototype(id) {
@@ -185,10 +272,10 @@ export function bootstrapPrototypeHost({
   const targetPrototypeId = initialPrototypeId || prototypes[0]?.id;
   if (targetPrototypeId) {
     loadPrototype(targetPrototypeId).catch((error) => {
-      console.error('Failed to load initial prototype', error); // eslint-disable-line no-console
+      console.error('Failed to load initial prototype', error);
     });
   } else {
-    console.warn('No prototypes registered; nothing to load.'); // eslint-disable-line no-console
+    console.warn('No prototypes registered; nothing to load.');
   }
 
   return {
@@ -220,7 +307,7 @@ function safeStorage(method, key, value) {
   try {
     if (method === 'getItem') return window?.localStorage?.getItem(key) ?? null;
     if (method === 'setItem') window?.localStorage?.setItem(key, value);
-  } catch (_) {
+  } catch {
     return null;
   }
   return null;
@@ -252,7 +339,7 @@ function updateMeta(metaRoot, def) {
   }
 }
 
-function initSeedPanel(root, { seed, onApply, onRandomize }) {
+function initSeedPanel(root, { seed, onApply, onRandomize, onLoadManifest }) {
   root.innerHTML = '';
 
   const title = document.createElement('h3');
@@ -268,6 +355,8 @@ function initSeedPanel(root, { seed, onApply, onRandomize }) {
   input.spellcheck = false;
   input.value = seed;
   input.placeholder = 'Enter seed…';
+  let lastAppliedSeed = seed;
+  let statusTimer = null;
 
   const applyButton = document.createElement('button');
   applyButton.type = 'button';
@@ -281,18 +370,99 @@ function initSeedPanel(root, { seed, onApply, onRandomize }) {
   });
 
   row.appendChild(input);
-  row.appendChild(applyButton);
   root.appendChild(row);
+
+  const actionsDetails = document.createElement('details');
+  actionsDetails.className = 'seed-actions-group';
+  const actionsSummary = document.createElement('summary');
+  actionsSummary.textContent = 'Seed Actions';
+  actionsDetails.appendChild(actionsSummary);
+
+  const actionBody = document.createElement('div');
+  actionBody.className = 'seed-actions-body';
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.textContent = 'Copy';
+  copyButton.addEventListener('click', async () => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(input.value);
+        flashStatus('Seed copied');
+        return;
+      }
+    } catch (error) {
+      console.warn('clipboard write failed', error);
+    }
+    input.select();
+    flashStatus('Copy via ⌘C / Ctrl+C');
+  });
+
+  const resetButton = document.createElement('button');
+  resetButton.type = 'button';
+  resetButton.textContent = 'Reset';
+  resetButton.addEventListener('click', () => {
+    input.value = lastAppliedSeed;
+    onApply?.(lastAppliedSeed);
+    flashStatus('Seed reset');
+  });
 
   const randomButton = document.createElement('button');
   randomButton.type = 'button';
   randomButton.textContent = 'Randomize';
   randomButton.addEventListener('click', () => onRandomize?.());
-  root.appendChild(randomButton);
+
+  const manifestInput = document.createElement('input');
+  manifestInput.type = 'file';
+  manifestInput.accept = 'application/json';
+  manifestInput.style.display = 'none';
+  manifestInput.addEventListener('change', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !target.files?.length) return;
+    const [file] = target.files;
+    try {
+      const text = await file.text();
+      const manifest = JSON.parse(text);
+      onLoadManifest?.(manifest);
+      flashStatus('Manifest loaded');
+    } catch (error) {
+      console.warn('Failed to load manifest', error);
+      flashStatus('Manifest invalid');
+    } finally {
+      target.value = '';
+    }
+  });
+  actionBody.appendChild(manifestInput);
+
+  const loadButton = document.createElement('button');
+  loadButton.type = 'button';
+  loadButton.textContent = 'Load Manifest';
+  loadButton.addEventListener('click', () => manifestInput.click());
+
+  [applyButton, copyButton, resetButton, randomButton, loadButton].forEach((button) => {
+    button.className = 'seed-action';
+    actionBody.appendChild(button);
+  });
+
+  actionsDetails.appendChild(actionBody);
+  root.appendChild(actionsDetails);
+
+  const status = document.createElement('p');
+  status.className = 'seed-status';
+  root.appendChild(status);
+
+  function flashStatus(message) {
+    status.textContent = message;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => {
+      status.textContent = '';
+    }, 2000);
+  }
 
   return {
     setValue(value) {
       input.value = value;
+      lastAppliedSeed = value;
     },
   };
 }

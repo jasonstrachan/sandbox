@@ -1,6 +1,6 @@
 const FRAME_UNIFORM_BYTE_SIZE = 64; // 16-byte aligned payload for WGSL uniform blocks
-const BUFFER_USAGE = typeof GPUBufferUsage !== 'undefined'
-  ? GPUBufferUsage
+const BUFFER_USAGE = typeof globalThis !== 'undefined' && globalThis.GPUBufferUsage
+  ? globalThis.GPUBufferUsage
   : { UNIFORM: 0x10, COPY_DST: 0x20 };
 
 export function createFrameUniforms(device, {

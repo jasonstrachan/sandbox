@@ -11,20 +11,8 @@ export function createControlPanel(root) {
 
   const inputs = new Map();
 
-  function mount(defs = [], onChange = () => {}) {
-    root.innerHTML = '';
-    inputs.clear();
-
-    if (!defs.length) {
-      const empty = document.createElement('p');
-      empty.className = 'control-empty';
-      empty.textContent = 'No exposed controls for this prototype.';
-      root.appendChild(empty);
-      return;
-    }
-
-    defs.forEach((def) => {
-      const control = normalizeControl(def);
+  function renderControlGroup(list, container, onChange) {
+    list.forEach((control) => {
       const wrapper = document.createElement('label');
       wrapper.className = 'control-row';
       wrapper.dataset.key = control.key;
@@ -42,8 +30,24 @@ export function createControlPanel(root) {
       });
 
       wrapper.appendChild(input);
-      root.appendChild(wrapper);
+      container.appendChild(wrapper);
     });
+  }
+
+  function mount(defs = [], onChange = () => {}) {
+    root.innerHTML = '';
+    inputs.clear();
+
+    if (!defs.length) {
+      const empty = document.createElement('p');
+      empty.className = 'control-empty';
+      empty.textContent = 'No exposed controls for this prototype.';
+      root.appendChild(empty);
+      return;
+    }
+
+    const controls = defs.map(normalizeControl);
+    renderControlGroup(controls, root, onChange);
   }
 
   function update(key, value) {
@@ -72,8 +76,10 @@ function normalizeControl(def) {
     step: def.step ?? 0.01,
     value: def.value ?? def.defaultValue ?? 0,
     options: def.options || [],
+    devOnly: Boolean(def.devOnly),
   };
 }
+
 
 function renderControl(control) {
   const renderer = CONTROL_RENDERERS[control.type];
@@ -94,8 +100,8 @@ function createRangeInput({ min, max, step, value }) {
 function createNumberInput({ min, max, step, value }) {
   const input = document.createElement('input');
   input.type = 'number';
-  if (typeof min === 'number') input.min = min;
-  if (typeof max === 'number') input.max = max;
+  if (typeof min === 'number') input.min = String(min);
+  if (typeof max === 'number') input.max = String(max);
   input.step = step;
   input.value = value;
   return input;

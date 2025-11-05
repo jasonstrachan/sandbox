@@ -2,6 +2,9 @@ const MASK_64 = (1n << 64n) - 1n;
 const TAU = 0x9e3779b97f4a7c15n;
 const DOUBLE_SCALE = 2 ** 53;
 
+/**
+ * @param {string | number | bigint} seedInput
+ */
 export function createPRNG(seedInput = Date.now()) {
   let state = initState(seedInput);
 
@@ -67,6 +70,9 @@ export function hashSeed(input) {
   return (BigInt(h2 >>> 0) << 32n) | BigInt(h1 >>> 0);
 }
 
+/**
+ * @param {string | number | bigint} seedInput
+ */
 function initState(seedInput) {
   let hashed = (hashSeed(seedInput) + TAU) & MASK_64;
   const s0 = splitMix64(hashed);
@@ -75,6 +81,9 @@ function initState(seedInput) {
   return { s0, s1, seed: normalizeSeed(seedInput) };
 }
 
+/**
+ * @param {bigint} value
+ */
 function splitMix64(value) {
   let z = (value + TAU) & MASK_64;
   z = (z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n & MASK_64;
@@ -82,6 +91,10 @@ function splitMix64(value) {
   return z ^ (z >> 31n);
 }
 
+/**
+ * @param {bigint} s0
+ * @param {bigint} s1
+ */
 function xoroshiro128plusStep(s0, s1) {
   const result = (s0 + s1) & MASK_64;
   let newS1 = s1 ^ s0;
@@ -90,6 +103,10 @@ function xoroshiro128plusStep(s0, s1) {
   return { result, s0: newS0 & MASK_64, s1: newS1 & MASK_64 };
 }
 
+/**
+ * @param {bigint} x
+ * @param {bigint} k
+ */
 function rotl(x, k) {
   return ((x << k) & MASK_64) | (x >> (64n - k));
 }

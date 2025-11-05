@@ -1,5 +1,9 @@
 const TWO_PI = Math.PI * 2;
 
+/**
+ * @typedef {{ x: number, y: number, vx: number, vy: number }} FlowParticle
+ */
+
 export const flowField = {
   id: 'flow-field',
   title: 'Flow Field Sketch',
@@ -14,6 +18,14 @@ export const flowField = {
     { key: 'stroke', label: 'Stroke', type: 'color', value: '#8be9fd' },
   ],
   create(env) {
+    /** @type {{
+     *   particles: FlowParticle[],
+     *   particleCount: number,
+     *   speed: number,
+     *   persistence: number,
+     *   stroke: string,
+     *   lastPointer: { x: number, y: number } | null,
+     * }} */
     const state = {
       particles: [],
       particleCount: 640,
@@ -84,6 +96,10 @@ export const flowField = {
   },
 };
 
+/**
+ * @param {{ width: number, height: number }} bounds
+ * @returns {FlowParticle}
+ */
 function spawnParticle({ width, height }) {
   return {
     x: Math.random() * width,

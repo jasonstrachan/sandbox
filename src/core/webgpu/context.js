@@ -1,15 +1,26 @@
 import { getDevicePixelRatio } from '../canvas.js';
 import { createFrameUniforms } from './frame-uniforms.js';
 
-const DEFAULT_OPTIONAL_FEATURES = ['timestamp-query', 'texture-compression-bc', 'shader-f16'];
+const DEFAULT_OPTIONAL_FEATURES = /** @type {GPUFeatureName[]} */ (
+  ['timestamp-query', 'texture-compression-bc', 'shader-f16']
+);
 
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {{
+ *   requiredFeatures?: GPUFeatureName[],
+ *   optionalFeatures?: GPUFeatureName[],
+ *   requiredLimits?: GPUDeviceDescriptor['requiredLimits'],
+ *   adapterOptions?: GPURequestAdapterOptions,
+ * }} [options]
+ */
 export async function createWebGPUContext(
   canvas,
   {
     requiredFeatures = [],
     optionalFeatures = DEFAULT_OPTIONAL_FEATURES,
     requiredLimits = {},
-    adapterOptions = { powerPreference: 'high-performance' },
+    adapterOptions = /** @type {GPURequestAdapterOptions} */ ({ powerPreference: 'high-performance' }),
   } = {}
 ) {
   if (!canvas) throw new Error('Canvas element is required for WebGPU context');
@@ -27,10 +38,10 @@ export async function createWebGPUContext(
   }
 
   const filteredOptional = optionalFeatures.filter((feature) => adapterFeatures.includes(feature));
+  const requestedFeatures = [...new Set([...requiredFeatures, ...filteredOptional])];
 
   const device = await adapter.requestDevice({
-    requiredFeatures,
-    optionalFeatures: filteredOptional,
+    requiredFeatures: requestedFeatures,
     requiredLimits,
   });
 
@@ -64,7 +75,7 @@ export async function createWebGPUContext(
   const frameUniforms = createFrameUniforms(device);
 
   device.lost?.then((info) => {
-    console.warn('WebGPU device lost', info?.message || info); // eslint-disable-line no-console
+    console.warn('WebGPU device lost', info?.message || info); 
   });
 
   return {
