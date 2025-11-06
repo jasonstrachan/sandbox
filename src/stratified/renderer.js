@@ -4,6 +4,54 @@ import { DITHER_SHADER, MAX_DITHER_WIDTH } from './wgsl/dither.js';
 import { rendererBindGroupEntries } from './wgsl/shared.js';
 import { hashString } from '../utils/hash.js';
 
+const BILLBOARD_SHADER = /* wgsl */ `
+${sceneShaderHeader()}
+
+struct QuadVertexIn {
+  @location(0) quadPos : vec2f,
+  @location(1) center : vec4f,
+};
+
+struct QuadVertexOut {
+  @builtin(position) position : vec4f,
+  @location(0) localOffset : vec2f,
+};
+
+fn isoProject(pos : vec3f) -> vec2f {
+  let isoX = (pos.x - pos.z) * 0.70710678;
+  let isoY = pos.y * -0.9 + (pos.x + pos.z) * 0.35;
+  return vec2f(isoX, isoY);
+}
+
+@vertex
+fn vs_billboard(input : QuadVertexIn) -> QuadVertexOut {
+  var out : QuadVertexOut;
+  let isoScale = scene.viewB.x;
+  let resolution = scene.viewA.xy;
+  let center = isoProject(input.center.xyz) * isoScale + scene.viewA.zw;
+  let pixelRadius = max(input.center.w * isoScale, 0.5);
+  let offset = input.quadPos * pixelRadius;
+  let ndcX = ((center.x + offset.x) / resolution.x) * 2.0 - 1.0;
+  let ndcY = 1.0 - ((center.y + offset.y) / resolution.y) * 2.0;
+  out.position = vec4f(ndcX, ndcY, 0.0, 1.0);
+  out.localOffset = input.quadPos;
+  return out;
+}
+
+@fragment
+fn fs_billboard(input : QuadVertexOut) -> @location(0) vec4f {
+  let dist = length(input.localOffset);
+  if (dist > 1.0) {
+    discard;
+  }
+  let baseColor = scene.palette1.xyz;
+  let highlight = scene.palette0.xyz;
+  let col = mix(baseColor, highlight, 0.35);
+  let alpha = clamp(1.0 - dist, 0.0, 1.0);
+  return vec4f(col, alpha);
+}
+`;
+
 const SCENE_UNIFORM_SIZE = 128;
 const GROUND_RESOLUTION = 64;
 const GROUND_EXTENT = 0.65;
@@ -204,6 +252,66 @@ export function createStratifiedRenderer(env) {
     },
   });
 
+  const billboardShaderModule = device.createShaderModule({
+    label: 'stratified-billboard-shader',
+    code: BILLBOARD_SHADER,
+  });
+
+  const billboardQuadData = new Float32Array([
+    -1, -1,
+    1, -1,
+    -1, 1,
+    -1, 1,
+    1, -1,
+    1, 1,
+  ]);
+  const billboardQuadBuffer = device.createBuffer({
+    label: 'stratified-billboard-quad',
+    size: billboardQuadData.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    mappedAtCreation: true,
+  });
+  new Float32Array(billboardQuadBuffer.getMappedRange()).set(billboardQuadData);
+  billboardQuadBuffer.unmap();
+
+  let billboardInstanceBuffer = null;
+  let billboardInstanceCapacity = 0;
+  let billboardInstanceCount = 0;
+
+  const billboardPipeline = device.createRenderPipeline({
+    label: 'stratified-billboard-pipeline',
+    layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+    vertex: {
+      module: billboardShaderModule,
+      entryPoint: 'vs_billboard',
+      buffers: [
+        {
+          arrayStride: 8,
+          attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }],
+        },
+        {
+          arrayStride: 16,
+          stepMode: 'instance',
+          attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x4' }],
+        },
+      ],
+    },
+    fragment: {
+      module: billboardShaderModule,
+      entryPoint: 'fs_billboard',
+      targets: [
+        {
+          format: PIXEL_TEXTURE_FORMAT,
+          blend: {
+            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
+        },
+      ],
+    },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+  });
+
   const upscaleModule = device.createShaderModule({
     label: 'stratified-upscale-shader',
     code: UPSCALE_SHADER,
@@ -367,6 +475,39 @@ export function createStratifiedRenderer(env) {
     indexCount = count ?? 0;
   }
 
+  function ensureBillboardBuffer(byteSize) {
+    if (billboardInstanceBuffer && billboardInstanceCapacity >= byteSize) {
+      return;
+    }
+    billboardInstanceBuffer?.destroy?.();
+    billboardInstanceBuffer = device.createBuffer({
+      label: 'stratified-billboard-instances',
+      size: byteSize,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    billboardInstanceCapacity = byteSize;
+  }
+
+  function setBillboardInstances(instances = []) {
+    if (!Array.isArray(instances) || instances.length === 0) {
+      billboardInstanceCount = 0;
+      return;
+    }
+    const count = Math.min(instances.length, 2048);
+    const data = new Float32Array(count * 4);
+    for (let i = 0; i < count; i += 1) {
+      const entry = instances[i] || {};
+      data[i * 4 + 0] = entry.x ?? 0;
+      data[i * 4 + 1] = entry.y ?? 0;
+      data[i * 4 + 2] = entry.z ?? 0;
+      data[i * 4 + 3] = Math.max(0.001, entry.r ?? 0.03);
+    }
+    const byteSize = data.byteLength;
+    ensureBillboardBuffer(byteSize);
+    device.queue.writeBuffer(billboardInstanceBuffer, 0, data.buffer, data.byteOffset, data.byteLength);
+    billboardInstanceCount = count;
+  }
+
   function setStrataTextures(views = {}) {
     const nextViews = {
       pigment: views.pigment ?? fallbackViews.pigment,
@@ -450,10 +591,14 @@ export function createStratifiedRenderer(env) {
     device.queue.writeBuffer(sceneUniformBuffer, 0, data.buffer, data.byteOffset, data.byteLength);
   }
 
-  function render({ clearColor }) {
-    const hasGround = groundIndexCount > 0;
-    const hasArtifacts = Boolean(vertexBuffer && indexBuffer && indexCount > 0);
-    if (!hasGround && !hasArtifacts) return;
+  /**
+   * @param {{ clearColor?: string, showGround?: boolean, skipArtifacts?: boolean, drawBillboards?: boolean }} [options]
+   */
+  function render({ clearColor, showGround = true, skipArtifacts = false, drawBillboards = false } = {}) {
+    const hasGround = showGround && groundIndexCount > 0;
+    const hasArtifacts = !skipArtifacts && Boolean(vertexBuffer && indexBuffer && indexCount > 0);
+    const hasBillboards = drawBillboards && billboardInstanceCount > 0;
+    if (!hasGround && !hasArtifacts && !hasBillboards) return;
     if (!pixelTarget) {
       setPixelTargetSize(env.canvas?.width ?? 1, env.canvas?.height ?? 1);
     }
@@ -487,6 +632,13 @@ export function createStratifiedRenderer(env) {
       pass.setVertexBuffer(0, vertexBuffer);
       pass.setIndexBuffer(indexBuffer, 'uint32');
       pass.drawIndexed(indexCount);
+    }
+    if (hasBillboards) {
+      pass.setPipeline(billboardPipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.setVertexBuffer(0, billboardQuadBuffer);
+      pass.setVertexBuffer(1, billboardInstanceBuffer);
+      pass.draw(6, billboardInstanceCount);
     }
     pass.end();
 
@@ -533,6 +685,8 @@ export function createStratifiedRenderer(env) {
     indexBuffer?.destroy?.();
     groundVertexBuffer?.destroy?.();
     groundIndexBuffer?.destroy?.();
+    billboardInstanceBuffer?.destroy?.();
+    billboardQuadBuffer.destroy();
     sceneUniformBuffer.destroy();
     Object.values(fallbackTextures).forEach((texture) => texture.destroy());
     pixelTarget?.texture?.destroy?.();
@@ -550,6 +704,7 @@ export function createStratifiedRenderer(env) {
     setPixelResolution: setPixelTargetSize,
     getPixelResolution: () => ({ ...pixelSettings }),
     setDitherOptions,
+    setBillboardInstances,
     getShaderManifest() {
       return shaderManifest.map((entry) => ({ ...entry }));
     },

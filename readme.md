@@ -6,8 +6,10 @@ This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps
 
 1. Install deps once: `npm install`
 2. Run locally: `npm run dev`
-3. Build for static hosting: `npm run build`
-4. Optional WGSL lint: `npm run lint:wgsl` (requires `wgsl_analyzer` or `naga` on your PATH)
+3. If Vite ever looks "stuck" on an old bundle, wipe its cache and restart with `npm run dev:clean` (deletes `node_modules/.vite` and re-bundles dependencies with `--force`).
+4. Build for static hosting: `npm run build` (or `npm run preview:prod` to build *and* serve the hashed output).
+5. When you need to blow away old artifacts, use `npm run clean`.
+6. Optional WGSL lint: `npm run lint:wgsl` (requires `wgsl_analyzer` or `naga` on your PATH)
 
 ## Creating a new prototype branch
 
@@ -34,6 +36,12 @@ This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps
 - `src/core/controls.js` – minimal UI renderer for sliders, colors, selects.
 - `src/prototypes/*.js` – drop-in modules that expose `{ id, title, controls, create() }`.
 
+### Live-build instrumentation & reset flow
+
+- The HUD now prints `Build: <version@timestamp>` on the first line (derived from `package.json` + page load time). If that timestamp didn’t change after a refresh, you’re still staring at the old bundle.
+- A developer-only `Factory Reset` action sits under the stratified controls. Clicking it wipes `localStorage['stratified.controls']` and reloads the page so the new defaults immediately apply.
+- Prefer that button (or DevTools → Application → Storage → “Clear site data”) instead of hunting through storage keys by hand.
+
 See `docs/prototypes.md` for a deeper breakdown of the contract between the host and each prototype.
 
 ## Stratified prototype cheat sheet
@@ -45,8 +53,8 @@ See `docs/prototypes.md` for a deeper breakdown of the contract between the host
 - **Exports**:
   - PNG captures include a manifest sidecar describing the seed, control snapshot, texture sizes, shader hashes, and WebGPU feature set.
   - WebM capture prefers WebCodecs + VP9 (ImageBitmap → `VideoEncoder` → custom WebM muxer). When WebCodecs aren’t available, the code falls back to `MediaRecorder`. Each run auto-stops after ~8 seconds and writes the same manifest format as PNG.
-- **Autosave**: every persisted control (spawn count, gravity, damping, rest threshold, etc.) is mirrored into `localStorage`, so dev tweaks survive refreshes without manually editing defaults.
-- **Pool guard**: the overlay shows `Pool <active>/<max>`; when it reads `— paused`, spawn waves are suppressed because the artifact pool is full. Use the dev-only `Recycle Pool` toggle or raise `maxArtifacts` to free space.
+- **Autosave / reset**: every persisted control (spawn count, gravity, damping, rest threshold, etc.) is mirrored into `localStorage` so tweaks survive refreshes. The new `Factory Reset` control wipes that storage and reloads when you want a clean slate without touching DevTools.
+- **Pool guard**: the overlay shows `Pool <active>/<max>` plus the last pool event; when it reads `— paused`, spawn waves are suppressed because the artifact pool is full. Use the dev-only `Recycle Pool` toggle or raise `maxArtifacts` to free space. Export manifests now include the pool event log so field captures record every suppression/recycle.
 - **Validation**: see `docs/validation-report.md` for the scenario checklist (single-box drop, mixed rain, long-haul, and 4K/120 Hz profiling). Populate that file with your local metrics + manifests before sharing captures outside the team.
 
 ## CI notes

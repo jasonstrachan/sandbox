@@ -203,13 +203,25 @@ export function bootstrapPrototypeHost({
     activePrototype?.update?.({ ctx: env.ctx, overlayCtx: env.overlayCtx, now, dt, env });
   });
 
+  const capturedPointers = new Set();
+
   const pointerHandler = (event) => {
-    if (event.cancelable) event.preventDefault();
-    if (event.type === 'pointerdown') {
+    const isDown = event.type === 'pointerdown';
+    const isUp = event.type === 'pointerup' || event.type === 'pointercancel';
+    const isCaptured = capturedPointers.has(event.pointerId);
+
+    if (isDown) {
+      capturedPointers.add(event.pointerId);
       canvas.setPointerCapture?.(event.pointerId);
-    } else if (event.type === 'pointerup') {
+    } else if (isUp && isCaptured) {
       canvas.releasePointerCapture?.(event.pointerId);
+      capturedPointers.delete(event.pointerId);
     }
+
+    if (event.cancelable && (isDown || isCaptured)) {
+      event.preventDefault();
+    }
+
     const rect = canvas.getBoundingClientRect();
     const dpr = canvas.width / rect.width;
     const data = {
@@ -224,7 +236,7 @@ export function bootstrapPrototypeHost({
     activePrototype?.onPointer?.(data, env);
   };
 
-  ['pointerdown', 'pointermove', 'pointerup'].forEach((type) => {
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach((type) => {
     canvas.addEventListener(type, pointerHandler);
   });
 

@@ -7,6 +7,14 @@
 /** @typedef {import('./types.js').ContactBuffers} ContactBuffers */
 /** @typedef {import('./types.js').SimulationTimings} SimulationTimings */
 
+import {
+  ARTIFACT_STATE_OFFSETS,
+  ARTIFACT_STATE_SIZE,
+  ARTIFACT_STATE_STRIDE,
+  ARTIFACT_STATE_STRUCT_WGSL,
+  writeArtifactStateEntry,
+} from './artifact-state-layout.js';
+
 const POSITION_STRIDE = 16; // vec4f per vertex
 const VELOCITY_STRIDE = 16; // vec4f (xyz + mass)
 const EDGE_TRIPLET_STRIDE = 3;
@@ -15,8 +23,6 @@ const SIM_UNIFORM_SIZE = 64; // paramsA + paramsB + paramsC + paramsD
 const CONTACT_CAPACITY = 8192;
 const CONTACT_RECORD_SIZE = 48; // three vec4f (position, normal+impulse, payload)
 const CONTACT_STATE_SIZE = 16; // counter + capacity + padding
-const ARTIFACT_STATE_SIZE = 48; // bytes per artifact entry
-const ARTIFACT_STATE_STRIDE = ARTIFACT_STATE_SIZE / 4;
 const IMPULSE_SCALE = 2048;
 const PASS_LABELS = ['integrate', 'distance', 'hinge', 'shape', 'rest'];
 const TIMESTAMP_SLOT_COUNT = PASS_LABELS.length * 2;
@@ -225,13 +231,38 @@ export function createSimulation(env, poolConfig = null) {
   };
   let artifactStateByteLength = 0;
   let artifactStateReadback = null;
+  /** @type {Array<null | {
+    index: number;
+    vertexOffset: number;
+    vertexCount: number;
+    vertexCapacity: number;
+    indexOffset: number;
+    indexCount: number;
+    indexCapacity: number;
+    edgeOffset: number;
+    edgeCount: number;
+    edgeCapacity: number;
+    hingeOffset: number;
+    hingeCount: number;
+    hingeCapacity: number;
+    settled: boolean;
+    sequence: number;
+  }>} */
+  const slotStates = [];
+  let slotSequenceCounter = 0;
 
   function createTimestampReadback(suffix) {
     const label = `stratified-timestamp-readback-${suffix}`;
+    const byteLength = TIMESTAMP_SLOT_COUNT * 8;
     return {
-      buffer: device.createBuffer({
-        label,
-        size: TIMESTAMP_SLOT_COUNT * 8,
+      resolveBuffer: device.createBuffer({
+        label: `${label}-resolve`,
+        size: byteLength,
+        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      }),
+      readBuffer: device.createBuffer({
+        label: `${label}-map`,
+        size: byteLength,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       }),
       pending: false,
@@ -257,12 +288,12 @@ export function createSimulation(env, poolConfig = null) {
     slot.pending = true;
     slot.count = queryCount;
     slot.passes = passes;
-    slot.buffer
+    slot.readBuffer
       .mapAsync(MAP_MODE_READ, 0, byteLength)
       .then(() => {
-        const mapped = slot.buffer.getMappedRange(0, byteLength);
+        const mapped = slot.readBuffer.getMappedRange(0, byteLength);
         const copy = mapped.slice(0);
-        slot.buffer.unmap();
+        slot.readBuffer.unmap();
         slot.pending = false;
         const values = new BigUint64Array(copy);
         processTimestampResults(values, passes);
@@ -270,7 +301,7 @@ export function createSimulation(env, poolConfig = null) {
       .catch(() => {
         slot.pending = false;
         try {
-          slot.buffer.unmap();
+          slot.readBuffer.unmap();
         } catch {
           // buffer may not be mapped; ignore
         }
@@ -339,13 +370,21 @@ export function createSimulation(env, poolConfig = null) {
     let settled = 0;
     let impulseSum = 0;
     let contactSum = 0;
+    const impulseOffset = ARTIFACT_STATE_OFFSETS.totalImpulse ?? 0;
+    const contactOffset = ARTIFACT_STATE_OFFSETS.contactCount ?? 1;
+    const flagsOffset = ARTIFACT_STATE_OFFSETS.flags ?? 5;
     for (let i = 0; i < entryCount; i += 1) {
       const base = i * ARTIFACT_STATE_STRIDE;
-      impulseSum += view[base + 0];
-      contactSum += view[base + 1];
-      const flags = view[base + 5];
-      if ((flags & 0x1) === 0x1) {
+      impulseSum += view[base + impulseOffset];
+      contactSum += view[base + contactOffset];
+      const flags = view[base + flagsOffset];
+      const isSettled = (flags & 0x1) === 0x1;
+      if (isSettled) {
         settled += 1;
+      }
+      const slot = slotStates[i];
+      if (slot) {
+        slot.settled = isSettled;
       }
     }
     artifactMetrics.total = entryCount;
@@ -353,6 +392,67 @@ export function createSimulation(env, poolConfig = null) {
     artifactMetrics.active = Math.max(entryCount - settled, 0);
     artifactMetrics.avgImpulse = entryCount > 0 ? (impulseSum / IMPULSE_SCALE) / entryCount : 0;
     artifactMetrics.avgContacts = entryCount > 0 ? contactSum / entryCount : 0;
+  }
+
+  function resetSlotStates() {
+    slotStates.length = 0;
+    slotSequenceCounter = 0;
+  }
+
+  function ensureSlotState(index) {
+    if (!Number.isFinite(index) || index < 0) return null;
+    if (slotStates[index]) return slotStates[index];
+    const slot = {
+      index,
+      vertexOffset: 0,
+      vertexCount: 0,
+      vertexCapacity: 0,
+      indexOffset: 0,
+      indexCount: 0,
+      indexCapacity: 0,
+      edgeOffset: 0,
+      edgeCount: 0,
+      edgeCapacity: 0,
+      hingeOffset: 0,
+      hingeCount: 0,
+      hingeCapacity: 0,
+      settled: false,
+      sequence: slotSequenceCounter++,
+    };
+    slotStates[index] = slot;
+    return slot;
+  }
+
+  function registerSlotState(index, info = {}) {
+    const slot = ensureSlotState(index);
+    if (!slot) return null;
+    slot.vertexOffset = info.vertexOffset ?? slot.vertexOffset ?? 0;
+    slot.vertexCount = info.vertexCount ?? slot.vertexCount ?? 0;
+    slot.vertexCapacity = info.vertexCapacity ?? slot.vertexCount;
+    slot.indexOffset = info.indexOffset ?? slot.indexOffset ?? 0;
+    slot.indexCount = info.indexCount ?? slot.indexCount ?? 0;
+    slot.indexCapacity = info.indexCapacity ?? slot.indexCount;
+    slot.edgeOffset = info.edgeOffset ?? slot.edgeOffset ?? 0;
+    slot.edgeCount = info.edgeCount ?? slot.edgeCount ?? 0;
+    slot.edgeCapacity = info.edgeCapacity ?? slot.edgeCount;
+    slot.hingeOffset = info.hingeOffset ?? slot.hingeOffset ?? 0;
+    slot.hingeCount = info.hingeCount ?? slot.hingeCount ?? 0;
+    slot.hingeCapacity = info.hingeCapacity ?? slot.hingeCount;
+    slot.settled = false;
+    slot.sequence = slotSequenceCounter++;
+    return slot;
+  }
+
+  function getSettledSlotIndices(limit = 0) {
+    if (!limit || limit <= 0) return [];
+    const entries = [];
+    for (const slot of slotStates) {
+      if (slot?.settled) {
+        entries.push({ index: slot.index, sequence: slot.sequence });
+      }
+    }
+    entries.sort((a, b) => a.sequence - b.sequence);
+    return entries.slice(0, limit).map((entry) => entry.index);
   }
 
   let restPositionBuffer = null;
@@ -530,6 +630,31 @@ export function createSimulation(env, poolConfig = null) {
       queue.writeBuffer(artifactStateBuffer, 0, artifactStateStorage);
     }
 
+    if (artifactCount > 0) {
+      resetSlotStates();
+      normalizedArtifacts.forEach((artifact, index) => {
+        const meshRange = artifact?.ranges?.meshRange;
+        if (!meshRange) return;
+        const constraintRange = artifact?.ranges?.constraintRange || {};
+        registerSlotState(index, {
+          vertexOffset: meshRange.vertexOffset ?? 0,
+          vertexCount: meshRange.vertexCount ?? 0,
+          vertexCapacity: meshRange.vertexCount ?? 0,
+          indexOffset: meshRange.indexOffset ?? 0,
+          indexCount: meshRange.indexCount ?? 0,
+          indexCapacity: meshRange.indexCount ?? 0,
+          edgeOffset: constraintRange.edgeRange?.offset ?? 0,
+          edgeCount: constraintRange.edgeRange?.count ?? 0,
+          edgeCapacity: constraintRange.edgeRange?.count ?? 0,
+          hingeOffset: constraintRange.hingeRange?.offset ?? 0,
+          hingeCount: constraintRange.hingeRange?.count ?? 0,
+          hingeCapacity: constraintRange.hingeRange?.count ?? 0,
+        });
+      });
+    } else {
+      resetSlotStates();
+    }
+
     ensureBindGroups();
   }
 
@@ -655,6 +780,150 @@ export function createSimulation(env, poolConfig = null) {
     }
 
     return appended;
+  }
+
+  function rewriteSlotsFromStaging(
+    slotIndices = [],
+    meshViews = {},
+    constraintViews = {},
+    artifactRecords = []
+  ) {
+    if (!streamingEnabled) {
+      return { written: 0, failed: slotIndices?.slice?.() ?? [] };
+    }
+    if (!slotIndices?.length || !artifactRecords?.length) {
+      return { written: 0, failed: [] };
+    }
+    const count = Math.min(slotIndices.length, artifactRecords.length);
+    const positions = meshViews?.positions ?? new Float32Array();
+    const indices = meshViews?.indices ?? new Uint32Array();
+    const masses = meshViews?.masses ?? new Float32Array();
+    const edges = constraintViews?.edges ?? new Uint32Array();
+    const edgeRestLengths = constraintViews?.edgeRestLengths ?? new Float32Array();
+    const edgeCompliance = constraintViews?.edgeCompliance ?? new Float32Array();
+    const hinges = constraintViews?.hinges ?? new Uint32Array();
+    const hingeRestAngles = constraintViews?.hingeRestAngles ?? new Float32Array();
+    const hingeCompliance = constraintViews?.hingeCompliance ?? new Float32Array();
+    const failed = [];
+    let written = 0;
+
+    for (let i = 0; i < count; i += 1) {
+      const slotIndex = slotIndices[i];
+      const slot = slotStates[slotIndex];
+      const record = artifactRecords[i];
+      const meshRange = record?.ranges?.meshRange;
+      if (!slot || !meshRange) {
+        failed.push(slotIndex);
+        continue;
+      }
+      const constraintRange = record?.ranges?.constraintRange || {};
+      const addedVertices = meshRange.vertexCount ?? 0;
+      const addedIndices = meshRange.indexCount ?? 0;
+      const edgeRange = constraintRange.edgeRange || { offset: 0, count: 0 };
+      const hingeRange = constraintRange.hingeRange || { offset: 0, count: 0 };
+      const addedEdges = edgeRange.count ?? 0;
+      const addedHinges = hingeRange.count ?? 0;
+      if (
+        addedVertices <= 0 ||
+        addedVertices > (slot.vertexCapacity || 0) ||
+        addedIndices > (slot.indexCapacity || 0) ||
+        addedEdges > (slot.edgeCapacity || 0) ||
+        addedHinges > (slot.hingeCapacity || 0)
+      ) {
+        failed.push(slotIndex);
+        continue;
+      }
+
+      const vertexOffset = meshRange.vertexOffset ?? 0;
+      const positionSlice = packPositionsSlice(positions, vertexOffset, addedVertices);
+      device.queue.writeBuffer(restPositionBuffer, slot.vertexOffset * POSITION_STRIDE, positionSlice);
+      device.queue.writeBuffer(positionBuffer, slot.vertexOffset * POSITION_STRIDE, positionSlice);
+
+      const velocitySlice = buildInitialVelocitySlice(masses, vertexOffset, addedVertices);
+      device.queue.writeBuffer(velocityBuffer, slot.vertexOffset * VELOCITY_STRIDE, velocitySlice);
+
+      const artifactVertexIds = new Uint32Array(Math.max(slot.vertexCapacity, addedVertices));
+      artifactVertexIds.fill(slot.index);
+      device.queue.writeBuffer(vertexArtifactBuffer, slot.vertexOffset * 4, artifactVertexIds);
+
+      const rebasedIndices = rebaseIndexSlice(indices, meshRange.indexOffset ?? 0, addedIndices, slot.vertexOffset);
+      if (addedIndices > 0) {
+        device.queue.writeBuffer(indexBuffer, slot.indexOffset * 4, rebasedIndices);
+      }
+      const leftoverIndices = Math.max(0, (slot.indexCapacity || 0) - addedIndices);
+      if (leftoverIndices > 0) {
+        device.queue.writeBuffer(indexBuffer, (slot.indexOffset + addedIndices) * 4, getZeroBytes(leftoverIndices * 4));
+      }
+
+      if (slot.edgeCapacity > 0) {
+        if (addedEdges > 0) {
+          const packedEdges = packEdgeSlice(edges, edgeRange.offset ?? 0, addedEdges, slot.vertexOffset);
+          device.queue.writeBuffer(edgeBuffer, slot.edgeOffset * 16, packedEdges);
+          const edgeRest = interleaveRestComplianceSlice(
+            edgeRestLengths,
+            edgeCompliance,
+            edgeRange.offset ?? 0,
+            addedEdges
+          );
+          device.queue.writeBuffer(edgeRestComplianceBuffer, slot.edgeOffset * 8, /** @type {BufferSource} */ (edgeRest));
+        }
+        const leftoverEdges = Math.max(0, slot.edgeCapacity - addedEdges);
+        if (leftoverEdges > 0) {
+          device.queue.writeBuffer(edgeBuffer, (slot.edgeOffset + addedEdges) * 16, getZeroBytes(leftoverEdges * 16));
+          device.queue.writeBuffer(
+            edgeRestComplianceBuffer,
+            (slot.edgeOffset + addedEdges) * 8,
+            getZeroBytes(leftoverEdges * 8)
+          );
+        }
+      } else if (addedEdges > 0) {
+        failed.push(slotIndex);
+        continue;
+      }
+
+      if (slot.hingeCapacity > 0) {
+        if (addedHinges > 0) {
+          const packedHinges = packHingeSlice(hinges, hingeRange.offset ?? 0, addedHinges, slot.vertexOffset);
+          device.queue.writeBuffer(hingeBuffer, slot.hingeOffset * 16, packedHinges);
+          const hingeRest = interleaveRestComplianceSlice(
+            hingeRestAngles,
+            hingeCompliance,
+            hingeRange.offset ?? 0,
+            addedHinges
+          );
+          device.queue.writeBuffer(hingeRestComplianceBuffer, slot.hingeOffset * 8, /** @type {BufferSource} */ (hingeRest));
+        }
+        const leftoverHinges = Math.max(0, slot.hingeCapacity - addedHinges);
+        if (leftoverHinges > 0) {
+          device.queue.writeBuffer(hingeBuffer, (slot.hingeOffset + addedHinges) * 16, getZeroBytes(leftoverHinges * 16));
+          device.queue.writeBuffer(
+            hingeRestComplianceBuffer,
+            (slot.hingeOffset + addedHinges) * 8,
+            getZeroBytes(leftoverHinges * 8)
+          );
+        }
+      } else if (addedHinges > 0) {
+        failed.push(slotIndex);
+        continue;
+      }
+
+      const artifactState = encodeArtifactStateSingle(descriptorWithDefaults(record?.descriptor), addedVertices);
+      device.queue.writeBuffer(artifactStateBuffer, slotIndex * ARTIFACT_STATE_SIZE, artifactState);
+
+      slot.vertexCount = addedVertices;
+      slot.indexCount = addedIndices;
+      slot.edgeCount = addedEdges;
+      slot.hingeCount = addedHinges;
+      slot.settled = false;
+      slot.sequence = slotSequenceCounter++;
+      written += 1;
+    }
+
+    if (written > 0) {
+      ensureBindGroups();
+    }
+
+    return { written, failed };
   }
 
   function ensureBindGroups() {
@@ -811,6 +1080,7 @@ export function createSimulation(env, poolConfig = null) {
     materialIdMap.clear();
     nextMaterialId = 0;
     device.queue.writeBuffer(contactStateBuffer, 0, contactStateInit);
+    resetSlotStates();
   }
 
   function descriptorWithDefaults(descriptor = {}) {
@@ -829,27 +1099,18 @@ export function createSimulation(env, poolConfig = null) {
   }
 
   function encodeArtifactStateSingle(descriptor, vertexSpan) {
-    const storage = new ArrayBuffer(ARTIFACT_STATE_SIZE);
-    const stateUint = new Uint32Array(storage);
-    const stateFloat = new Float32Array(storage);
     const matKey = descriptor.material?.id ?? descriptor.classId ?? `mat-${nextMaterialId}`;
     if (!materialIdMap.has(matKey)) {
       materialIdMap.set(matKey, nextMaterialId);
       nextMaterialId += 1;
     }
     const matId = materialIdMap.get(matKey) ?? 0;
-    stateUint[0] = 0;
-    stateUint[1] = 0;
-    stateUint[2] = 0;
-    stateUint[3] = 0;
-    stateUint[4] = 0;
-    stateUint[5] = 0;
-    stateUint[6] = matId;
-    stateUint[7] = vertexSpan;
-    stateFloat[8] = descriptor.material?.friction ?? 0.5;
-    stateFloat[9] = descriptor.material?.restitution ?? 0.08;
-    stateFloat[10] = descriptor.material?.damping ?? 0.9;
-    stateFloat[11] = descriptor.material?.smearCoeff ?? 0.5;
+    const storage = new ArrayBuffer(ARTIFACT_STATE_SIZE);
+    writeArtifactStateEntry(storage, 0, {
+      materialId: matId,
+      vertexCount: vertexSpan,
+      material: descriptor.material,
+    });
     return storage;
   }
 
@@ -981,7 +1242,9 @@ export function createSimulation(env, poolConfig = null) {
           queryCount: Math.min(queryIndex, TIMESTAMP_SLOT_COUNT),
           passes: recordedPasses.map((entry) => ({ ...entry })),
         };
-        encoder.resolveQuerySet(timestampQuerySet, 0, readbackRequest.queryCount, slot.buffer, 0);
+        const byteLength = readbackRequest.queryCount * 8;
+        encoder.resolveQuerySet(timestampQuerySet, 0, readbackRequest.queryCount, slot.resolveBuffer, 0);
+        encoder.copyBufferToBuffer(slot.resolveBuffer, 0, slot.readBuffer, 0, byteLength);
       }
     }
 
@@ -1184,6 +1447,8 @@ export function createSimulation(env, poolConfig = null) {
   return {
     uploadFromStaging,
     appendFromStaging,
+    rewriteSlots: rewriteSlotsFromStaging,
+    getSettledSlots: getSettledSlotIndices,
     resetGeometry,
     step,
     getGeometryBuffers,
@@ -1194,6 +1459,18 @@ export function createSimulation(env, poolConfig = null) {
     dumpContacts,
     destroy,
   };
+}
+
+const zeroByteCache = new Map();
+
+function getZeroBytes(byteLength) {
+  if (!byteLength || byteLength <= 0) {
+    return new Uint8Array();
+  }
+  if (!zeroByteCache.has(byteLength)) {
+    zeroByteCache.set(byteLength, new Uint8Array(byteLength));
+  }
+  return zeroByteCache.get(byteLength);
 }
 
 function packPositions(source) {
@@ -1276,14 +1553,10 @@ function buildVertexArtifactIds(vertexCount, artifacts) {
 }
 
 function createArtifactStateStorage(artifacts) {
-  const strideFloats = ARTIFACT_STATE_SIZE / 4;
   const storage = new ArrayBuffer(Math.max(artifacts.length, 1) * ARTIFACT_STATE_SIZE);
-  const stateUint = new Uint32Array(storage);
-  const stateFloat = new Float32Array(storage);
   const materialIds = new Map();
   let nextMaterialId = 0;
   for (let i = 0; i < artifacts.length; i += 1) {
-    const base = i * strideFloats;
     const material = artifacts[i]?.descriptor?.material || {};
     const span = artifacts[i]?.ranges?.meshRange?.vertexCount ?? 0;
     const key = material.id ?? `mat-${i}`;
@@ -1291,19 +1564,12 @@ function createArtifactStateStorage(artifacts) {
       materialIds.set(key, nextMaterialId);
       nextMaterialId += 1;
     }
-    const matId = materialIds.get(key);
-    stateUint[base + 0] = 0;
-    stateUint[base + 1] = 0;
-    stateUint[base + 2] = 0;
-    stateUint[base + 3] = 0;
-    stateUint[base + 4] = 0;
-    stateUint[base + 5] = 0;
-    stateUint[base + 6] = matId ?? 0;
-    stateUint[base + 7] = span;
-    stateFloat[base + 8] = material.friction ?? 0.5;
-    stateFloat[base + 9] = material.restitution ?? 0.08;
-    stateFloat[base + 10] = material.damping ?? 0.9;
-    stateFloat[base + 11] = material.smearCoeff ?? 0.5;
+    const matId = materialIds.get(key) ?? 0;
+    writeArtifactStateEntry(storage, i, {
+      materialId: matId,
+      vertexCount: span,
+      material,
+    });
   }
   return storage;
 }
@@ -1356,17 +1622,7 @@ struct ContactRecord {
   payload : vec4f,
 };
 
-struct ArtifactState {
-  totalImpulse : atomic<u32>,
-  contactCount : atomic<u32>,
-  maxSpeed : atomic<u32>,
-  padAtomic : u32,
-  restFrames : u32,
-  flags : u32,
-  materialId : u32,
-  vertexCount : u32,
-  materialParams : vec4f,
-};
+${ARTIFACT_STATE_STRUCT_WGSL}
 
 const CONTACT_IMPULSE_SCALE : f32 = 2048.0;
 const SPEED_TRACK_SCALE : f32 = 8192.0;
@@ -1648,17 +1904,7 @@ struct SimUniforms {
   paramsD : vec4f,
 };
 
-struct ArtifactState {
-  totalImpulse : atomic<u32>,
-  contactCount : atomic<u32>,
-  maxSpeed : atomic<u32>,
-  padAtomic : u32,
-  restFrames : u32,
-  flags : u32,
-  materialId : u32,
-  vertexCount : u32,
-  materialParams : vec4f,
-};
+${ARTIFACT_STATE_STRUCT_WGSL}
 
 const SPEED_TRACK_SCALE : f32 = 8192.0;
 

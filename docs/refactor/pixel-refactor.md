@@ -48,6 +48,7 @@
   3. Reinterpret `spawnCadence` as seconds between waves plus optional burst count so we can art-direct density.
   4. Move strata/palette compaction updates to trigger per wave instead of per full respawn.
 - [x] Add a pool-saturation guard + manual recycle control so exhausted pools no longer trigger continuous full respawns (buying time until the streaming rewrite lands).
+- [x] Prototype GPU-side slot rewrites so settled artifacts can be overwritten in place (new wave reuses settled slots when capacity is tapped; still needs smarter slot sizing/ring-buffering).
 - [x] Add a slow, deterministic **vertical camera scroll** so strata migrate downward over hours, revealing new layers at the top.
 - [x] Track **compaction depth** and gradually increase palette desaturation as objects descend/bake.
 

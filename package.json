@@ -5,13 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:clean": "rm -rf node_modules/.vite && vite --force",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:prod": "npm run build && npm run preview",
+    "test": "node --test",
+    "test:watch": "node --test --watch",
     "prepare": "husky",
     "lint": "npm run lint:js && npm run lint:wgsl",
     "lint:js": "eslint . --max-warnings=0",
     "lint:wgsl": "node scripts/wgsl-lint.mjs",
-    "typecheck": "tsc --noEmit --pretty false"
+    "typecheck": "tsc --noEmit --pretty false",
+    "clean": "rm -rf dist"
   },
   "repository": {
     "type": "git",

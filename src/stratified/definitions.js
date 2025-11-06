@@ -59,6 +59,21 @@ export const MATERIAL_PRESETS = {
 /** @type {ArtifactClass[]} */
 export const ARTIFACT_CLASSES = [
   {
+    id: 'circle',
+    title: 'Circle Disc',
+    builder: 'circle',
+    materialId: 'coin',
+    weight: 1,
+    params: {
+      radius: [0.02, 0.04],
+      thickness: [0.0008, 0.0015],
+      segments: { range: [96, 180], type: 'int' },
+    },
+    constraintProfile: {
+      structuralMultiplier: 1.4,
+    },
+  },
+  {
     id: 'box',
     title: 'Box / Carton',
     builder: 'box',

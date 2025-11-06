@@ -4,6 +4,7 @@ export const MeshBuilders = {
   box: buildBoxMesh,
   wrapper: buildWrapperMesh,
   coin: buildCoinMesh,
+  circle: buildCircleMesh,
 };
 
 export function buildBoxMesh(params, { material }) {
@@ -274,6 +275,16 @@ export function buildCoinMesh(params, { material }) {
       hinges,
     },
   };
+}
+
+export function buildCircleMesh(params, context) {
+  const tuned = {
+    ...params,
+    lipHeight: 0,
+    segments: Math.max(64, params?.segments ?? 144),
+    thickness: params?.thickness ?? 0.001,
+  };
+  return buildCoinMesh(tuned, context);
 }
 
 function computeVertexNormals(positions, indices) {
