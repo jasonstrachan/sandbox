@@ -90,7 +90,7 @@ test('logPoolEvent caps history to POOL_EVENT_LIMIT entries', () => {
 });
 
 test('getPoolSnapshot reflects suppression state and max artifacts', () => {
-  const { pipeline, state } = createPipeline({
+  const { pipeline } = createPipeline({
     state: { poolSuppressed: true, poolSuppressedReason: 'test', maxArtifacts: 42 },
   });
   pipeline.logPoolEvent('wave', { appended: 1 });

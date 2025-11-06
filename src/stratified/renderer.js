@@ -1,7 +1,7 @@
 import { STRATIFIED_SHADER, GROUND_SHADER } from './wgsl/renderer.js';
 import { UPSCALE_SHADER } from './wgsl/upscale.js';
 import { DITHER_SHADER, MAX_DITHER_WIDTH } from './wgsl/dither.js';
-import { rendererBindGroupEntries } from './wgsl/shared.js';
+import { rendererBindGroupEntries, sceneShaderHeader } from './wgsl/shared.js';
 import { hashString } from '../utils/hash.js';
 
 const BILLBOARD_SHADER = /* wgsl */ `

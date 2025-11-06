@@ -148,15 +148,12 @@ export class StratifiedPipeline {
     const target = Math.min(state.spawnCount, state.maxArtifacts);
     if (target <= 0) return 0;
 
-    const settledSlotHelper = null;
-    const rewriteHelper = null;
     const metrics = simulation.getArtifactMetrics?.() || {};
     const active = metrics.total ?? 0;
     let capacity = Math.max(0, state.maxArtifacts - active);
     state.debugPoolActive = active;
     state.debugPoolCapacity = capacity;
     state.debugSettledSlots = 0;
-    let settledSlots = [];
     let reused = 0;
 
     // Diagnostics: disable slot rewrites so every wave forces fresh geometry.

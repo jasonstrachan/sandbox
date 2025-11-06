@@ -12,12 +12,7 @@ import {
   CONTROL_STORAGE_KEY,
 } from '../stratified/controller.js';
 import { StratifiedPipeline } from '../stratified/pipeline.js';
-import {
-  createStratifiedHUD,
-  buildDiagnosticsSnapshot,
-  buildPoolSnapshot,
-  buildExportManifest,
-} from '../stratified/hud.js';
+import { createStratifiedHUD, buildExportManifest } from '../stratified/hud.js';
 
 /** @typedef {import('../stratified/types.js').SimulationPoolConfig} SimulationPoolConfig */
 
@@ -562,17 +557,6 @@ export const stratified = {
       controller.unbindHotkeys();
     }
 
-    function togglePause(nextValue = !state.paused) {
-      controller.togglePause(nextValue);
-    }
-
-    function toggleSlowMotion(forceValue) {
-      controller.toggleSlowMotion(forceValue);
-    }
-
-    function triggerForceBake() {
-      controller.forceBake();
-    }
 
     function handleContactDump() {
       if (typeof simulation.dumpContacts !== 'function') {
