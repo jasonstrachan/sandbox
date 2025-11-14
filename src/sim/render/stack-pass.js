@@ -252,7 +252,7 @@ function drawBendResiduals(ctx, artifact, warp) {
 const TIER_VISUALS = {
   active: { label: 'A', fill: 'rgba(120,200,255,0.95)', stroke: 'rgba(8,24,40,0.9)', text: '#04121a' },
   resting: { label: 'S', fill: 'rgba(255,210,120,0.95)', stroke: 'rgba(46,26,4,0.9)', text: '#1b1104' },
-  buried: { label: 'B', fill: 'rgba(180,180,200,0.85)', stroke: 'rgba(20,20,30,0.85)', text: '#0d0d15' },
+  buried: { label: 'B', fill: 'rgba(210,150,255,0.95)', stroke: 'rgba(46,16,80,0.9)', text: '#1a082a' },
   default: { label: '?', fill: 'rgba(200,200,200,0.9)', stroke: 'rgba(20,20,20,0.85)', text: '#050505' },
 };
 

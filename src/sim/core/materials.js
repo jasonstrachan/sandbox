@@ -7,6 +7,7 @@ export const MATERIAL_PROFILES = {
   'irregular-shard': material({ density: 0.7, stretch: 1.6e-4, area: 4e-4, baseHue: 0 }),
   'handbag-tote': material({ density: 0.5, stretch: 3e-4, area: 6e-4, baseHue: 0.92 }),
   'bicycle-chunk': material({ density: 1.2, stretch: 9e-5, area: 2e-4, baseHue: 0.58 }),
+  'bicycle-frame': material({ density: 1.5, stretch: 4e-5, area: 9e-5, baseHue: 0.62, velocityDamping: 4, writebackDamping: 0.08 }),
   'skull-icon': material({ density: 1.05, stretch: 1.4e-4, area: 2.4e-4, baseHue: 0.15 }),
 };
 

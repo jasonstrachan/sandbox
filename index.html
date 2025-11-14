@@ -32,10 +32,11 @@
       }
       .app-shell {
         display: grid;
-        grid-template-columns: 320px 1fr;
+        grid-template-columns: clamp(260px, 24vw, 360px) minmax(0, 1fr);
         gap: 16px;
-        padding: 16px;
-        width: 100%;
+        padding: 16px 24px;
+        width: min(100%, 1920px);
+        margin: 0 auto;
       }
       .panel {
         background: rgba(11, 12, 18, 0.9);
@@ -69,6 +70,7 @@
         overflow: hidden;
         background: #020308;
         border: 1px solid rgba(255, 255, 255, 0.06);
+        min-height: clamp(420px, 70vh, 960px);
       }
       canvas {
         position: absolute;
@@ -162,6 +164,12 @@
         color: rgba(230, 240, 255, 0.7);
         font-style: italic;
       }
+      @media (min-width: 1400px) {
+        .app-shell {
+          grid-template-columns: clamp(260px, 22vw, 420px) minmax(960px, 1fr);
+        }
+      }
+
       @media (max-width: 960px) {
         .app-shell {
           grid-template-columns: 1fr;

@@ -4,14 +4,15 @@ import { vec2 } from '../sim/math/vec2.js';
 import { Xoshiro128 } from '../sim/rng/xoshiro128.js';
 
 const STATIC_LAYOUT = [
-  { shapeId: 'box-carton', anchor: [0.22, 0.22], scale: 1 },
-  { shapeId: 'flat-mailer', anchor: [0.45, 0.2], scale: 0.9 },
-  { shapeId: 'bottle-profile', anchor: [0.7, 0.26], scale: 1 },
-  { shapeId: 'phone-slab', anchor: [0.18, 0.5], scale: 1 },
-  { shapeId: 'irregular-shard', anchor: [0.42, 0.55], scale: 1.05 },
-  { shapeId: 'handbag-tote', anchor: [0.7, 0.58], scale: 1 },
-  { shapeId: 'bicycle-chunk', anchor: [0.3, 0.82], scale: 0.95 },
-  { shapeId: 'skull-icon', anchor: [0.62, 0.8], scale: 1 },
+  { shapeId: 'box-carton', anchor: [0.22, 0.22], scale: 1, label: 'Box / Carton' },
+  { shapeId: 'flat-mailer', anchor: [0.45, 0.2], scale: 0.9, label: 'Flat Mailer' },
+  { shapeId: 'bottle-profile', anchor: [0.7, 0.26], scale: 1, label: 'Bottle Profile' },
+  { shapeId: 'phone-slab', anchor: [0.18, 0.5], scale: 1, label: 'Phone Slab' },
+  { shapeId: 'irregular-shard', anchor: [0.42, 0.55], scale: 1.05, label: 'Irregular Shard' },
+  { shapeId: 'handbag-tote', anchor: [0.7, 0.58], scale: 1, label: 'Handbag Tote' },
+  { shapeId: 'bicycle-chunk', anchor: [0.3, 0.82], scale: 0.95, label: 'Bicycle Chunk' },
+  { shapeId: 'bicycle-frame', anchor: [0.5, 0.78], scale: 1, label: 'Bicycle Frame' },
+  { shapeId: 'skull-icon', anchor: [0.62, 0.8], scale: 1, label: 'Skull Icon' },
 ];
 
 export const v0StaticRender = {
@@ -67,6 +68,7 @@ export const v0StaticRender = {
       ctx.fillStyle = '#05060a';
       ctx.fillRect(0, 0, size.width, size.height);
       renderArtifacts(ctx, state.artifacts, { showLattice: state.showLattice });
+      renderLabels(ctx, state.artifacts);
       if (state.showOverlay) renderDiagnostics(env.overlayCtx, state.artifacts);
       else env.overlayCtx?.clearRect?.(0, 0, size.width, size.height);
     };
@@ -83,3 +85,21 @@ export const v0StaticRender = {
     };
   },
 };
+
+function renderLabels(ctx, artifacts) {
+  if (!ctx || !artifacts?.length) return;
+  ctx.save();
+  ctx.font = '12px "IBM Plex Sans", sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.textAlign = 'center';
+  artifacts.forEach((artifact) => {
+    const label = STATIC_LAYOUT.find((entry) => entry.shapeId === artifact.shapeId)?.label;
+    if (!label) return;
+    const bounds = artifact.bounds;
+    if (!bounds) return;
+    const x = bounds.minX + bounds.width * 0.5;
+    const y = bounds.maxY + 18;
+    ctx.fillText(label, x, y);
+  });
+  ctx.restore();
+}

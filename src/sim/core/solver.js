@@ -18,7 +18,7 @@ export class XPBDSolver {
         solveAreaSet(mesh, subDt, environment);
         solveBendSet(mesh, subDt);
         solveJointSet(mesh, subDt);
-        solveGroundPlane(mesh, environment.groundY ?? Infinity);
+        solveGroundPlane(mesh, environment);
       }
       applyWriteback(mesh);
       finalizeVelocities(mesh, subDt);
@@ -240,12 +240,17 @@ function applyBoundaryCcd(mesh, environment) {
   });
 }
 
-function solveGroundPlane(mesh, groundY) {
+function solveGroundPlane(mesh, environment = {}) {
+  const groundY = environment.groundY ?? Infinity;
   if (!isFinite(groundY)) return;
+  const restitution = clamp01(environment.restitution ?? 0);
   mesh.particles.forEach((particle) => {
     if (particle.position.y > groundY) {
       particle.position.y = groundY;
-      if (particle.velocity.y > 0) particle.velocity.y = 0;
+      if (particle.velocity.y > 0) {
+        particle.velocity.y = -particle.velocity.y * restitution;
+        if (Math.abs(particle.velocity.y) < 1) particle.velocity.y = 0;
+      }
     }
   });
 }
@@ -368,4 +373,9 @@ function applyGroundFriction(mesh, dt, environment) {
 
 function computeTriangleArea(a, b, c) {
   return 0.5 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+}
+
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }

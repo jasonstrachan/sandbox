@@ -99,7 +99,13 @@ We restrict v0.x to a small set of canonical silhouettes with fixed vertex and p
    * Outline: 18–26 vertices (frame + two wheel arcs + seat/handle hints).
    * Target lattice: 12×14 grid (~168 particles) used sparingly (e.g., at most 1–2 active at a time) due to higher cost; stiffer stretch but moderate bend plasticity.
 
-8. **Skull (Iconic Object)**
+8. **Bicycle Frame**
+
+   * Description: rigid-forward bike frame outline with implied wheels; emphasises triangles and tubes more than sheets.
+   * Outline: 12–16 vertices (triangle + seat/chain stays + bar hints).
+   * Target lattice: 14×12 grid (~168 particles) paired with lower compliance / damping so it behaves near-rigid while airborne.
+
+9. **Skull (Iconic Object)**
 
    * Description: stylised skull front-view (cranium + jaw contour), treated as a single slab for physics in v0.x; eyes/nose rendered as visual cutouts only.
    * Outline: 16–24 vertices (outer contour, no physical holes in v0.x).
@@ -127,6 +133,12 @@ We restrict v0.x to a small set of canonical silhouettes with fixed vertex and p
    * Outline: 18–26 vertices (frame + two wheel arcs + seat/handle hints).
    * Target lattice: 12×14 grid (~168 particles) used sparingly (e.g., at most 1–2 active at a time) due to higher cost; stiffer stretch but moderate bend plasticity.
 
+10. **Bicycle Frame**
+
+   * Description: rigidised frame contour with triangles + bars; wheels implied only by the outline arc.
+   * Outline: 12–16 vertices.
+   * Target lattice: 14×12 grid (~168 particles) with lower compliance for stretch/area so it stays stiff in flight.
+
 ### Shape Source & Determinism
 
 * All silhouettes are defined as **pre-authored polylines** (JSON assets) under version control.
@@ -138,6 +150,16 @@ We restrict v0.x to a small set of canonical silhouettes with fixed vertex and p
 * v0.x particle target per mesh: **36–120 particles**, depending on shape.
 * v0.x constraint target per mesh: ~6× particle count (stretch + area + optional bend).
 * Combined with `N_max = 8`, this bounds total particles at ~300–960 and constraints at ~1.8k–5.8k.
+
+### Solver Strategy for Mixed Materials
+
+We deliberately run everything through the **same XPBD solver** (`src/sim/core/solver.js`) so per-frame work stays predictable, but we layer in *modes* so rigid props don’t melt like cloth:
+
+- **Single core integrator.** All artifacts share the same stretch / area / bend constraint pipeline and fixed `dt = 1/120 s`. Materials only differ by density, compliance, damping, etc., which keeps scheduling and determinism simple.
+- **World-scale + energy restore.** `StackSimulation` now maintains `worldScale` (default `0.25`) so gravity is applied in “meters” and active tiers can opt into `restoreEnergy` to recover the kinetic energy XPBD bleeds off each iteration. This gives fast, ballistic drops without changing render space.
+- **Tier-aware behavior (planned).** Rather than introducing multiple solvers, rigid-ish artifacts will run in an “active mode” that prunes soft constraints (area/bend) and/or adds lightweight shape-matching until first contact, then re-enables the full cloth-like solve for piling and compaction. Soft props simply stay in the full mode all the time.
+
+This approach means we can simulate cardboard, totes, phones, or a simplified bicycle silhouette without spawning different physics engines. Performance stays bounded (same SoA layout, same constraint counts), and we only pay for extra rigidity where needed via per-artifact flags rather than whole new solvers.
 
 ---
 

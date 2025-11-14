@@ -17,6 +17,22 @@ const PROFILING_SCENES = {
   quad: ['box-carton', 'flat-mailer', 'phone-slab', 'handbag-tote'],
   full: ['box-carton', 'flat-mailer', 'bottle-profile', 'phone-slab', 'irregular-shard', 'handbag-tote', 'bicycle-chunk', 'skull-icon'],
 };
+const NUMERIC_CONTROL_KEYS = new Set([
+  'scale',
+  'jitter',
+  'settleBias',
+  'velocityDamping',
+  'airDrag',
+  'writebackDamping',
+  'gravityScale',
+  'impactBounce',
+  'timeScale',
+  'plasticBeta',
+  'spawnInterval',
+  'preloadSeconds',
+  'meshDetail',
+  'maxArtifacts',
+]);
 
 export const stackSimulator = {
   id: 'stack-simulator',
@@ -28,9 +44,12 @@ export const stackSimulator = {
     { key: 'shapeId', label: 'Shape', type: 'select', options: shapeOptions, value: shapeOptions[0]?.value },
     { key: 'scale', label: 'Scale', type: 'range', min: 0.65, max: 1.25, step: 0.05, value: 1 },
     { key: 'jitter', label: 'Spawn Jitter', type: 'range', min: 0, max: 8, step: 0.5, value: 0 },
-    { key: 'velocityDamping', label: 'Velocity Damping', type: 'range', min: 0, max: 12, step: 0.5, value: 8 },
+    { key: 'settleBias', label: 'Settle Bias', type: 'range', min: 0, max: 1200, step: 20, value: 520 },
+    { key: 'velocityDamping', label: 'Velocity Damping', type: 'range', min: 0, max: 12, step: 0.5, value: 3 },
+    { key: 'airDrag', label: 'Air Drag', type: 'range', min: 0, max: 4, step: 0.1, value: 0.6 },
     { key: 'writebackDamping', label: 'Writeback', type: 'range', min: 0, max: 0.5, step: 0.01, value: 0.15 },
-    { key: 'gravityScale', label: 'Gravity Scale', type: 'range', min: 0.5, max: 3, step: 0.1, value: 1 },
+    { key: 'gravityScale', label: 'Gravity Scale', type: 'range', min: 0.5, max: 3, step: 0.1, value: 1.35 },
+    { key: 'impactBounce', label: 'Impact Bounce', type: 'range', min: 0, max: 0.6, step: 0.02, value: 0.2 },
     { key: 'timeScale', label: 'Time Scale', type: 'range', min: 0.5, max: 4, step: 0.1, value: 1 },
     { key: 'plasticBeta', label: 'Plastic β', type: 'range', min: 0, max: 0.1, step: 0.005, value: 0.02 },
     { key: 'meshDetail', label: 'Mesh Detail', type: 'range', min: 0.4, max: 1.2, step: 0.05, value: 0.8 },
@@ -74,9 +93,12 @@ export const stackSimulator = {
       shapeId: shapeOptions[0]?.value,
       scale: 1,
       jitter: 0,
-      velocityDamping: 8,
+      settleBias: 520,
+      velocityDamping: 3,
+      airDrag: 0.6,
       writebackDamping: 0.15,
-      gravityScale: 1,
+      gravityScale: 1.35,
+      impactBounce: 0.2,
       timeScale: 1,
       plasticBeta: 0.02,
       autoSpawn: true,
@@ -98,6 +120,9 @@ export const stackSimulator = {
     simulation.setGravityScale?.(state.gravityScale);
     simulation.setTimeScale?.(state.timeScale);
     simulation.setMaxArtifacts?.(state.maxArtifacts, { lock: true });
+    simulation.setAirDrag?.(state.airDrag);
+    simulation.setRestitution?.(state.impactBounce);
+    simulation.setSettleBias?.(state.settleBias);
 
     const enqueueNextShape = () => {
       const shape = shapeOptions[state.sequenceIndex % shapeOptions.length];
@@ -180,6 +205,8 @@ export const stackSimulator = {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = '#05060a';
       ctx.fillRect(0, 0, size.width, size.height);
+      const shake = simulation.getShakeOffset?.() ?? { x: 0, y: 0 };
+      ctx.translate(shake.x, shake.y);
       const warp = simulation.warp;
       renderRemnants(ctx, simulation.remnants, { warp });
       renderStrataGrid(ctx, simulation.grid, { warp });
@@ -221,6 +248,15 @@ export const stackSimulator = {
           12,
           66
         );
+        const dropStats = simulation.metrics?.dropStats ?? [];
+        if (dropStats.length) {
+          const latest = dropStats[0];
+          overlayCtx.fillText(
+            `Drop sample: ${(latest.height ?? 0).toFixed(0)}px in ${(latest.time ?? 0).toFixed(2)}s`,
+            12,
+            82
+          );
+        }
         overlayCtx.restore();
         renderGridOverlay(overlayCtx, simulation.grid, { warp });
         if (state.showWarp) {
@@ -251,15 +287,25 @@ export const stackSimulator = {
       update,
       onPointer,
       onControlChange(key, value) {
-        state[key] = value;
+        const nextValue = coerceControlValue(key, value);
+        state[key] = nextValue;
         if (key === 'velocityDamping' || key === 'writebackDamping' || key === 'plasticBeta') {
           applyMaterialOverrides();
+        }
+        if (key === 'airDrag') {
+          simulation.setAirDrag?.(state.airDrag);
         }
         if (key === 'gravityScale') {
           simulation.setGravityScale?.(state.gravityScale);
         }
+        if (key === 'settleBias') {
+          simulation.setSettleBias?.(state.settleBias);
+        }
         if (key === 'timeScale') {
           simulation.setTimeScale?.(state.timeScale);
+        }
+        if (key === 'impactBounce') {
+          simulation.setRestitution?.(state.impactBounce);
         }
         if (
           key === 'shapeId' ||
@@ -317,4 +363,11 @@ function summarizeTierCounts(artifacts) {
     summary.total += 1;
   });
   return summary;
+}
+
+function coerceControlValue(key, value) {
+  if (!NUMERIC_CONTROL_KEYS.has(key)) return value;
+  if (typeof value === 'number') return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : value;
 }
