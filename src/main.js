@@ -6,6 +6,7 @@ const overlay = document.getElementById('overlay');
 const picker = document.getElementById('prototype-picker');
 const controlsRoot = document.getElementById('prototype-controls');
 const metaRoot = document.getElementById('prototype-meta');
+const togglesRoot = document.getElementById('stage-toggles');
 
 bootstrapPrototypeHost({
   canvas,
@@ -13,5 +14,6 @@ bootstrapPrototypeHost({
   picker,
   controlsRoot,
   metaRoot,
+  togglesRoot,
   prototypes,
 });

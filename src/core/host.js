@@ -1,8 +1,12 @@
 import { createCanvasContext, createWebGLContext, syncOverlayCanvas } from './canvas.js';
 import { createRenderLoop } from './loop.js';
 import { createControlPanel } from './controls.js';
+import { createCanvasFrame } from './frame.js';
+import { createToggleBar } from './toggles.js';
 
 const STORAGE_KEY = 'sandbox-active-prototype';
+const CONTROL_STORAGE_PREFIX = 'sandbox-controls:';
+const TOGGLE_STORAGE_PREFIX = 'sandbox-toggles:';
 
 export function bootstrapPrototypeHost({
   canvas,
@@ -10,13 +14,23 @@ export function bootstrapPrototypeHost({
   picker,
   controlsRoot,
   metaRoot,
+  togglesRoot,
   prototypes,
 }) {
   if (!canvas || !picker) throw new Error('canvas and picker are required');
 
   const controlPanel = createControlPanel(controlsRoot);
+  const togglePanel = createToggleBar(togglesRoot);
   let renderingContext = null;
   let overlayView = null;
+  const frame = createCanvasFrame(canvas);
+  const failedContexts = new Set();
+  const toggleState = new Map();
+  const controlStateCache = new Map();
+  const togglePrefCache = new Map();
+  let paused = false;
+  let pausedTimestamp = null;
+  let activePrototypeId = null;
 
   const env = {
     canvas,
@@ -25,6 +39,13 @@ export function bootstrapPrototypeHost({
     gl: null,
     overlayCtx: null,
     size: () => ({ width: canvas.width, height: canvas.height }),
+    frame,
+    worldToCanvas: frame.worldToCanvas,
+    canvasToWorld: frame.canvasToWorld,
+    isPaused: () => paused,
+    getToggleState(key) {
+      return toggleState.get(key) ?? false;
+    },
     setBackground(color) {
       if (env.ctx) {
         env.ctx.fillStyle = color;
@@ -45,14 +66,22 @@ export function bootstrapPrototypeHost({
     renderingContext?.destroy?.();
     overlayView?.destroy?.();
 
-    if (kind.startsWith('webgl')) {
-      renderingContext = createWebGLContext(canvas, { contextId: kind });
-      env.gl = renderingContext.gl;
+    try {
+      if (kind.startsWith('webgl')) {
+        renderingContext = createWebGLContext(canvas, { contextId: kind });
+        env.gl = renderingContext.gl;
+        env.ctx = null;
+      } else {
+        renderingContext = createCanvasContext(canvas);
+        env.ctx = renderingContext.ctx;
+        env.gl = null;
+      }
+    } catch (error) {
+      renderingContext = null;
       env.ctx = null;
-    } else {
-      renderingContext = createCanvasContext(canvas);
-      env.ctx = renderingContext.ctx;
       env.gl = null;
+      env.overlayCtx = null;
+      throw error;
     }
 
     if (overlay) {
@@ -62,6 +91,12 @@ export function bootstrapPrototypeHost({
   }
 
   const loop = createRenderLoop(({ now, dt }) => {
+    if (paused) {
+      if (pausedTimestamp === null) pausedTimestamp = now;
+      activePrototype?.update?.({ ctx: env.ctx, overlayCtx: env.overlayCtx, now: pausedTimestamp, dt: 0, env });
+      return;
+    }
+    pausedTimestamp = null;
     activePrototype?.update?.({ ctx: env.ctx, overlayCtx: env.overlayCtx, now, dt, env });
   });
 
@@ -92,15 +127,51 @@ export function bootstrapPrototypeHost({
 
   let activePrototype = null;
 
-  function loadPrototype(id) {
+  function disablePrototypeOption(id) {
+    if (!picker) return;
+    const option = picker.querySelector(`option[value="${id}"]`);
+    if (!option) return;
+    if (!option.dataset.originalLabel) {
+      option.dataset.originalLabel = option.textContent;
+    }
+    option.disabled = true;
+    if (!option.textContent.includes(' (unavailable)')) {
+      option.textContent = `${option.dataset.originalLabel} (unavailable)`;
+    }
+  }
+
+  function loadPrototype(id, options = {}) {
+    const { allowFallback = true, forceRetry = false } = options;
     const def = prototypes.find((proto) => proto.id === id) || prototypes[0];
     if (!def) return;
+    if (failedContexts.has(def.id) && !forceRetry) {
+      console.warn(`Prototype "${def.title}" is disabled (context unavailable).`);
+      return;
+    }
 
     if (activePrototype?.destroy) {
       activePrototype.destroy();
     }
-
-    setupContext(def.context || '2d');
+    let contextError = null;
+    try {
+      setupContext(def.context || '2d');
+    } catch (error) {
+      contextError = error;
+    }
+    if (contextError) {
+      console.warn(`Failed to initialize ${def.context || '2d'} context for "${def.title}"`, contextError);
+      if (def.context?.startsWith('webgl') && allowFallback) {
+        failedContexts.add(def.id);
+        disablePrototypeOption(def.id);
+        const fallback = prototypes.find((proto) => !proto.context || !proto.context.startsWith('webgl'));
+        if (fallback && fallback.id !== def.id) {
+          console.warn(`Falling back to canvas prototype "${fallback.title}"`);
+          loadPrototype(fallback.id, { allowFallback: false });
+          return;
+        }
+      }
+      return;
+    }
 
     env.clearOverlay();
     env.setBackground(def.background || '#05060a');
@@ -108,13 +179,26 @@ export function bootstrapPrototypeHost({
     picker.value = def.id;
     updateMeta(metaRoot, def);
 
+    const savedControls = loadControlState(def.id);
+    const savedToggles = loadToggleState(def.id);
+
+    initializeToggles(def.toggles ?? [], savedToggles);
+
     const controls = def.controls ?? [];
     controlPanel.mount(controls, (key, value) => {
+      persistControlValue(def.id, key, value);
       activePrototype?.onControlChange?.(key, value, env);
     });
 
     const instance = def.create(env);
     activePrototype = instance;
+    activePrototypeId = def.id;
+
+    restoreControlState(def.id, savedControls);
+
+    toggleState.forEach((value, key) => {
+      activePrototype?.onToggleChange?.(key, value, env);
+    });
 
     if (!loopStarted) {
       loop.start();
@@ -147,8 +231,95 @@ export function bootstrapPrototypeHost({
       activePrototype?.destroy?.();
       renderingContext?.destroy?.();
       overlayView?.destroy?.();
+      togglePanel.destroy?.();
+      activePrototypeId = null;
     },
   };
+
+  function initializeToggles(defs, savedState = {}) {
+    togglePanel.mount(defs, (key, value) => handleToggleChange(key, value));
+    toggleState.clear();
+    paused = false;
+    pausedTimestamp = null;
+    defs.forEach((toggle) => {
+      const persisted = savedState?.[toggle.key];
+      const value = typeof persisted === 'boolean' ? persisted : Boolean(toggle.value);
+      togglePanel.setState(toggle.key, value);
+      handleToggleChange(toggle.key, value, { skipNotify: true, skipPersist: true });
+    });
+  }
+
+  function handleToggleChange(key, value, options = {}) {
+    const next = Boolean(value);
+    toggleState.set(key, next);
+    if (!options.skipPersist && activePrototypeId) {
+      persistToggleValue(activePrototypeId, key, next);
+    }
+    if (key === 'paused') {
+      paused = next;
+      if (!paused) pausedTimestamp = null;
+    }
+    if (!options.skipNotify) {
+      activePrototype?.onToggleChange?.(key, next, env);
+    }
+  }
+
+  function loadControlState(id) {
+    if (!id) return {};
+    if (controlStateCache.has(id)) return controlStateCache.get(id);
+    const raw = safeStorage('getItem', `${CONTROL_STORAGE_PREFIX}${id}`);
+    if (!raw) {
+      controlStateCache.set(id, {});
+      return controlStateCache.get(id);
+    }
+    try {
+      const parsed = JSON.parse(raw) || {};
+      controlStateCache.set(id, parsed);
+      return parsed;
+    } catch (_) {
+      controlStateCache.set(id, {});
+      return controlStateCache.get(id);
+    }
+  }
+
+  function persistControlValue(id, key, value) {
+    if (!id) return;
+    const state = { ...loadControlState(id), [key]: value };
+    controlStateCache.set(id, state);
+    safeStorage('setItem', `${CONTROL_STORAGE_PREFIX}${id}`, JSON.stringify(state));
+  }
+
+  function restoreControlState(id, saved) {
+    if (!saved) return;
+    Object.entries(saved).forEach(([key, value]) => {
+      controlPanel.update(key, value);
+    });
+  }
+
+  function loadToggleState(id) {
+    if (!id) return {};
+    if (togglePrefCache.has(id)) return togglePrefCache.get(id);
+    const raw = safeStorage('getItem', `${TOGGLE_STORAGE_PREFIX}${id}`);
+    if (!raw) {
+      togglePrefCache.set(id, {});
+      return togglePrefCache.get(id);
+    }
+    try {
+      const parsed = JSON.parse(raw) || {};
+      togglePrefCache.set(id, parsed);
+      return parsed;
+    } catch (_) {
+      togglePrefCache.set(id, {});
+      return togglePrefCache.get(id);
+    }
+  }
+
+  function persistToggleValue(id, key, value) {
+    if (!id) return;
+    const state = { ...loadToggleState(id), [key]: value };
+    togglePrefCache.set(id, state);
+    safeStorage('setItem', `${TOGGLE_STORAGE_PREFIX}${id}`, JSON.stringify(state));
+  }
 }
 
 function hexToRgb(hex) {

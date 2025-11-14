@@ -34,3 +34,16 @@ This branch is a fresh starting point for fast canvas/WebGL prototypes. It keeps
 - `src/prototypes/*.js` – drop-in modules that expose `{ id, title, controls, create() }`.
 
 See `docs/prototypes.md` for a deeper breakdown of the contract between the host and each prototype.
+
+## Organic Strata Simulator (2025 build)
+
+The `stack-simulator` prototype exercises the full v1.1 phased spec:
+
+- XPBD soft bodies with stretch/area/bend constraints, ground contacts, and per-tier scheduling.
+- Rectangular strata grid with depth-aware compaction, lateral creep, warp-aware rendering, and palette drift (hue from material + chroma/value from stress/age).
+- Plasticity with unified β drift across stretch/area/bend, plus deterministic distance joints that can yield or break.
+- Budget-aware scheduling (solver/grid/contacts timings vs. 4/2/3 ms targets) that dials back iterations and `N_max` when needed.
+- Determinism tracker that hashes SoA buffers every frame; goldens persist via `localStorage` and can be diffed offline with `node scripts/replay-diff.js baseline.json sample.json`.
+- Release soak harness: run `node scripts/soak-harness.js` to emit a deterministic spawn schedule (`dist/soak-schedule.json`) that you can feed into the sim for overnight runs to check color drift and compaction tiers on target hardware.
+
+Use the new controls to toggle auto-spawn, warp overlays, profiling scenes (1/4/8 meshes), damping/plastic β, and diagnostics overlays. Residual RMS and timing HUD values render on the overlay canvas so you can monitor stability in real time.

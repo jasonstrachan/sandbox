@@ -22,6 +22,7 @@ export const myPrototype = {
   tags: ['canvas', 'gpu'],
   background: '#05060a',
   context: '2d' | 'webgl' | 'webgl2',
+  toggles: [ /* optional stage toggle descriptors */ ],
   controls: [ /* optional control descriptors */ ],
   create(env) { /* return hooks */ }
 }
@@ -32,6 +33,7 @@ export const myPrototype = {
 - `update({ ctx, gl, now, dt, env })` – called every animation frame.
 - `onPointer(event, env)` – receives normalized pointer data (`x`, `y`, `buttons`, modifier keys).
 - `onControlChange(key, value, env)` – invoked whenever a UI control changes.
+- `onToggleChange(key, value, env)` – fires when a stage toggle button flips.
 - `destroy()` – clean up timers, buffers, event listeners.
 
 `env` contains:
@@ -42,6 +44,8 @@ export const myPrototype = {
 - `size()` – current `{ width, height }` in device pixels
 - `setBackground(color)` – convenience fill/clear helper
 - `clearOverlay()` – wipes the overlay canvas
+- `isPaused()` – returns whether the stage pause toggle is active
+- `getToggleState(key)` – reads the current on/off state for a stage toggle
 
 ## Controls
 
@@ -56,6 +60,18 @@ Control descriptors power the panel on the left. Supported types:
 | `select` | `options` (array of strings or `{ label, value }`) |
 
 When the user changes a control, `onControlChange(key, value)` fires.
+
+## Stage toggles
+
+Add lightweight, text-only toggles to the stage overlay by attaching a `toggles` array to your prototype definition. Each entry mirrors the control descriptor shape but only supports:
+
+| field | meaning |
+|-------|---------|
+| `key` | unique identifier surfaced via `getToggleState(key)` |
+| `label` | short uppercase-friendly label rendered on the stage |
+| `value` | initial `true`/`false` state |
+
+When a toggle changes, `onToggleChange(key, value)` fires on the active prototype (if implemented) so you can react without polling. You can also query the current state at render time via `env.getToggleState(key)`.
 
 ## Reference prototypes
 
