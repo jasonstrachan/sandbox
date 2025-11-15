@@ -12,10 +12,25 @@ import { Xoshiro128 } from '../sim/rng/xoshiro128.js';
 
 const shapeOptions = listSilhouettes().map((shape) => ({ value: shape.id, label: shape.title }));
 const INITIAL_SEQUENCE = ['box-carton', 'flat-mailer', 'bottle-profile', 'phone-slab', 'handbag-tote', 'skull-icon'];
+const CONTACT_HISTORY_LIMIT = 360;
 const PROFILING_SCENES = {
   single: ['box-carton'],
   quad: ['box-carton', 'flat-mailer', 'phone-slab', 'handbag-tote'],
   full: ['box-carton', 'flat-mailer', 'bottle-profile', 'phone-slab', 'irregular-shard', 'handbag-tote', 'bicycle-chunk', 'skull-icon'],
+  stress: [
+    'skull-icon',
+    'flat-mailer',
+    'skull-icon',
+    'irregular-shard',
+    'flat-mailer',
+    'phone-slab',
+    'flat-mailer',
+    'phone-slab',
+    'bottle-profile',
+    'bottle-profile',
+    'handbag-tote',
+    'handbag-tote',
+  ],
 };
 const NUMERIC_CONTROL_KEYS = new Set([
   'scale',
@@ -33,6 +48,7 @@ const NUMERIC_CONTROL_KEYS = new Set([
   'preloadSeconds',
   'meshDetail',
   'maxArtifacts',
+  'contactRigidity',
 ]);
 
 export const stackSimulator = {
@@ -65,6 +81,7 @@ export const stackSimulator = {
         { value: 'single', label: '1 Mesh' },
         { value: 'quad', label: '4 Meshes' },
         { value: 'full', label: '8 Meshes' },
+        { value: 'stress', label: 'Stress Stack' },
       ],
       value: 'none',
     },
@@ -82,6 +99,7 @@ export const stackSimulator = {
     { key: 'wireframe', label: 'Wireframe', value: true },
     { key: 'mesh', label: 'Mesh', value: true },
     { key: 'tierBadges', label: 'Tier Badges', value: true },
+    { key: 'contactStats', label: 'Contact Stats Overlay', value: true },
   ],
   create(env) {
     const determinismConfig = resolveDeterminismConfig();
@@ -110,6 +128,7 @@ export const stackSimulator = {
       preloadSeconds: 0,
       meshDetail: 0.8,
       maxArtifacts: 12,
+      contactRigidity: 1,
       sequenceIndex: 0,
       rng: new Xoshiro128('stack-prototype'),
       showParticles: true,
@@ -118,7 +137,17 @@ export const stackSimulator = {
       showBendResiduals: true,
       showWarp: false,
       profilingScene: 'none',
+      contactStatsHistory: [],
     };
+
+    const onKeyDown = (event) => {
+      if (!event) return;
+      const isSaveCombo = (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyC';
+      if (isSaveCombo) {
+        exportContactHistoryCsv(state.contactStatsHistory);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
 
     simulation.setGravityScale?.(state.gravityScale);
     simulation.setTimeScale?.(state.timeScale);
@@ -127,6 +156,7 @@ export const stackSimulator = {
     simulation.setRestitution?.(state.impactBounce);
     simulation.setSettleBias?.(state.settleBias);
     simulation.setBuryEvidenceFrames?.(state.buryEvidenceFrames);
+    applyContactRigidity(simulation, state.contactRigidity);
 
     const enqueueNextShape = () => {
       const shape = shapeOptions[state.sequenceIndex % shapeOptions.length];
@@ -195,6 +225,7 @@ export const stackSimulator = {
       });
       fastForwardSimulation(state.preloadSeconds);
       applyMaterialOverrides();
+      applyContactRigidity(simulation, state.contactRigidity);
     };
 
     rebuildScene();
@@ -207,6 +238,9 @@ export const stackSimulator = {
       const simDt = dt * state.timeScale;
       advanceSpawnTimer(simDt);
       applyMaterialOverrides();
+      if (simulation.metrics?.contactStats) {
+        recordContactHistory(state.contactStatsHistory, simulation.metrics.contactStats);
+      }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = '#05060a';
       ctx.fillRect(0, 0, size.width, size.height);
@@ -253,13 +287,29 @@ export const stackSimulator = {
           12,
           66
         );
+        const contactOverlayEnabled = env.getToggleState?.('contactStats') ?? true;
+        const contactStats = contactOverlayEnabled ? simulation.metrics?.contactStats : null;
+        if (contactStats) {
+          overlayCtx.fillText(
+            `contacts tested ${contactStats.pairsTested ?? 0}  solved ${contactStats.contactsResolved ?? 0}  cache ${contactStats.cacheHits ?? 0}  layered ${contactStats.layerContacts ?? 0}`,
+            12,
+            82
+          );
+          overlayCtx.fillText(
+            `max penetration ${(contactStats.maxPenetration ?? 0).toFixed(2)}  pinned ${contactStats.pinnedPairs ?? 0}  CCD samples ${contactStats.ccdSamples ?? 0}`,
+            12,
+            98
+          );
+          overlayCtx.fillText(`Ctrl+Shift+C to export contact CSV`, 12, 114);
+          drawContactHistoryChart(overlayCtx, state.contactStatsHistory);
+        }
         const dropStats = simulation.metrics?.dropStats ?? [];
         if (dropStats.length) {
           const latest = dropStats[0];
           overlayCtx.fillText(
             `Drop sample: ${(latest.height ?? 0).toFixed(0)}px in ${(latest.time ?? 0).toFixed(2)}s`,
             12,
-            82
+            contactStats ? 130 : 82
           );
         }
         overlayCtx.restore();
@@ -315,6 +365,9 @@ export const stackSimulator = {
         if (key === 'impactBounce') {
           simulation.setRestitution?.(state.impactBounce);
         }
+        if (key === 'contactRigidity') {
+          applyContactRigidity(simulation, state.contactRigidity);
+        }
         if (
           key === 'shapeId' ||
           key === 'scale' ||
@@ -335,6 +388,7 @@ export const stackSimulator = {
       destroy() {
         if (typeof simulation.destroy === 'function') simulation.destroy();
         else simulation.reset();
+        window.removeEventListener('keydown', onKeyDown);
       },
     };
   },
@@ -378,4 +432,97 @@ function coerceControlValue(key, value) {
   if (typeof value === 'number') return value;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : value;
+}
+
+function recordContactHistory(history, stats) {
+  if (!history || !stats) return;
+  const timestamp = (typeof performance !== 'undefined' ? performance.now() : Date.now()) | 0;
+  history.push({
+    t: timestamp,
+    pairsTested: stats.pairsTested ?? 0,
+    contactsResolved: stats.contactsResolved ?? 0,
+    maxPenetration: stats.maxPenetration ?? 0,
+  });
+  while (history.length > CONTACT_HISTORY_LIMIT) history.shift();
+}
+
+function drawContactHistoryChart(ctx, history) {
+  if (!ctx || !history?.length) return;
+  const chartWidth = 220;
+  const chartHeight = 60;
+  const margin = 12;
+  const originX = ctx.canvas.width - chartWidth - margin;
+  const originY = ctx.canvas.height - chartHeight - margin;
+  ctx.save();
+  ctx.fillStyle = 'rgba(5,6,10,0.7)';
+  ctx.fillRect(originX, originY, chartWidth, chartHeight);
+  if (history.length < 2) {
+    ctx.restore();
+    return;
+  }
+  const subset = history.slice(-chartWidth);
+  const maxPen = subset.reduce((acc, s) => Math.max(acc, s.maxPenetration ?? 0), 0.01);
+  const maxResolved = subset.reduce((acc, s) => Math.max(acc, s.contactsResolved ?? 0), 1);
+  plotSeries(ctx, subset, originX, originY, chartWidth, chartHeight, maxPen, (s) => s.maxPenetration ?? 0, '#f472b6');
+  plotSeries(ctx, subset, originX, originY, chartWidth, chartHeight, maxResolved, (s) => s.contactsResolved ?? 0, '#34d399');
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = '10px "IBM Plex Mono", monospace';
+  ctx.fillText('pen (pink) / contacts (green)', originX + 8, originY + 12);
+  ctx.restore();
+}
+
+function plotSeries(ctx, samples, originX, originY, width, height, maxValue, accessor, strokeStyle) {
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  samples.forEach((sample, index) => {
+    const value = accessor(sample);
+    const norm = Math.min(value, maxValue) / (maxValue || 1);
+    const px = originX + (index / (samples.length - 1)) * width;
+    const py = originY + height - norm * height;
+    if (index === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+}
+
+function exportContactHistoryCsv(history) {
+  if (!history?.length) return;
+  const header = 'timestamp_ms,pairs_tested,contacts_resolved,max_penetration';
+  const rows = history.map((sample) => `${sample.t},${sample.pairsTested},${sample.contactsResolved},${sample.maxPenetration}`);
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `contact-stats-${Date.now()}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function applyContactRigidity(simulation, rigidity) {
+  if (!simulation) return;
+  const t = clamp01Local(rigidity ?? 0);
+  const baseConfig = simulation.contactConfig ?? {};
+  const tuned = {
+    contactIterations: Math.round(lerp(2, 12, t)),
+    contactCompliance: lerp(0.0005, 0, t),
+    slop: lerp(0.35, 0.02, t),
+    radiusScale: lerp(1, 1.7, t),
+  };
+  simulation.contactConfig = { ...baseConfig, ...tuned };
+  if (simulation.contactState?.cache?.clear) {
+    simulation.contactState.cache.clear();
+  }
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function clamp01Local(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }

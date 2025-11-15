@@ -3,12 +3,35 @@ import { XPBDSolver } from '../core/solver.js';
 import { SIM_DEFAULTS } from '../core/constants.js';
 import { Xoshiro128 } from '../rng/xoshiro128.js';
 import { getSilhouette } from '../data/canonical-silhouettes.js';
-import { resolveInterMeshContacts } from './collisions.js';
+import { resolveInterMeshContacts, createContactState } from './collisions.js';
 import { StrataGrid } from '../grid/strata-grid.js';
 import { WarpField } from '../warp/warp-field.js';
 import { DeterminismTracker } from '../debug/determinism.js';
 
-const DEFAULT_CONTACT = { cellSize: 64, epsilon: 1.5, iterations: 3 };
+const DEFAULT_CONTACT = {
+  cellSize: 64,
+  cellSizes: [64, 32],
+  epsilon: 1.5,
+  includeProxies: true,
+  includeInterior: false,
+  proxySampleLimit: 160,
+  cacheTtl: 120,
+  maxPairsPerBucket: 96,
+  contactIterations: 6,
+  contactCompliance: 0,
+  friction: { static: 0.55, kinetic: 0.35 },
+  slop: 0.05,
+  predictiveCcd: true,
+  ccdScale: 1.1,
+  ccdVelocityClamp: 2200,
+  enableLayeredContacts: true,
+  clusterRadiusScale: 1.35,
+  radiusScale: 1.4,
+  minContactIterations: 2,
+  maxContactIterations: 8,
+  minRadiusScale: 1,
+  maxRadiusScale: 1.4,
+};
 const DEFAULT_MAX_FRAME_DT = 1 / 30; // clamp to ~33ms to avoid runaway catch-up
 const DEFAULT_MAX_CATCHUP_STEPS = 240; // cap solver work per RAF tick
 const BURY_MARGIN_PX = 20;
@@ -51,6 +74,7 @@ export class StackSimulation {
     const determinismOptions = resolveDeterminismOptions(options);
     this.detector = determinismOptions ? new DeterminismTracker(determinismOptions) : null;
     this.metrics = { residuals: { stretch: 0, area: 0, bend: 0 }, dropStats: [] };
+    this.metrics.contactRigidity = { target: 0, applied: 0 };
     this.iterationClamp = this.config.iterations;
     this.capacity = { base: this.N_max, dynamic: this.N_max, locked: false };
     this.remnants = [];
@@ -65,6 +89,7 @@ export class StackSimulation {
     this.settleBias = Math.max(0, options.settleBias ?? 0);
     this.impactShake = 0;
     this.shakePhase = 0;
+    this.contactState = createContactState();
   }
 
   setGravityScale(scale) {
@@ -211,8 +236,8 @@ export class StackSimulation {
       restitution: this.restitution,
     };
 
-    const solverStart = now();
-    this.artifacts.forEach((artifact) => {
+    const solverEntries = [];
+    this.artifacts.forEach((artifact, artifactIndex) => {
       const tier = artifact.tier ?? 'active';
       const isActive = tier === 'active';
       const iterations = this.iterationsForTier(tier);
@@ -220,28 +245,62 @@ export class StackSimulation {
       const nextFrame = artifact.nextUpdateFrame ?? 0;
       const hasAttachment = (artifact.attachmentWeight ?? 0) > 0;
       const shouldSolve = tier !== 'buried' || this.frameIndex >= nextFrame || hasAttachment;
-      if (!shouldSolve) return;
       const baseBeta = artifact.material.plastic?.beta;
       const betaScale = tier === 'buried' ? 0.25 : 1;
       artifact.material.plasticRuntimeBeta = scalePlasticBeta(baseBeta, betaScale);
-      this.solver.step(artifact, dt, solverEnv, iterations);
-      this.applyAirDrag(artifact, dt);
-      if (isActive) {
-        const energyAfter = computeKineticEnergy(artifact);
-        this.restoreEnergy(artifact, energyBefore, energyAfter);
-      }
-      this.applySettleBias(artifact, dt);
-      artifact.nextUpdateFrame = this.frameIndex + (tier === 'buried' ? 4 : 1);
-      artifact.age += dt;
+      solverEntries.push({
+        mesh: artifact,
+        artifactIndex,
+        tier,
+        isActive,
+        iterations,
+        shouldSolve,
+        energyBefore,
+      });
+    });
+
+    let contactDuration = 0;
+    const buildContacts = (payload = {}) => {
+      const start = now();
+      const result = resolveInterMeshContacts(this.artifacts, this.contactConfig, this.contactState, {
+        frameIndex: this.frameIndex,
+        stepDt: payload.dt,
+        stepIndex: payload.stepIndex,
+        iteration: payload.iteration,
+      });
+      contactDuration += now() - start;
+      return result;
+    };
+
+    const solverStart = now();
+    const solverOutcome = this.solver.stepSystem({
+      entries: solverEntries,
+      dt,
+      environment: solverEnv,
+      artifacts: this.artifacts,
+      contactConfig: this.contactConfig,
+      contactBuilder: this.artifacts.length > 1 ? buildContacts : null,
     });
     const solverTime = now() - solverStart;
+    const contactTime = contactDuration;
+    if (solverOutcome?.contactStats) this.metrics.contactStats = solverOutcome.contactStats;
+    this.applyAdaptiveContactRigidity();
 
-    const contactStart = now();
+    solverEntries.forEach((entry) => {
+      if (!entry.shouldSolve) return;
+      const artifact = entry.mesh;
+      this.applyAirDrag(artifact, dt);
+      if (entry.isActive) {
+        const energyAfter = computeKineticEnergy(artifact);
+        this.restoreEnergy(artifact, entry.energyBefore, energyAfter);
+      }
+      this.applySettleBias(artifact, dt);
+      artifact.nextUpdateFrame = this.frameIndex + (entry.tier === 'buried' ? 4 : 1);
+    });
+
     this.updateArtifactBounds();
     this.artifacts.forEach((artifact) => this.updateArtifactTier(artifact));
     this.collectRemnants();
-    this.resolveContacts(dt);
-    const contactTime = now() - contactStart;
 
     this.updateAttachmentWeights();
     const gridStart = now();
@@ -430,14 +489,6 @@ export class StackSimulation {
     });
   }
 
-  resolveContacts(dt) {
-    if (this.artifacts.length < 2) return;
-    const collided = resolveInterMeshContacts(this.artifacts, this.contactConfig);
-    if (collided) {
-      this.syncVelocities(dt);
-    }
-  }
-
   updateResidualMetrics() {
     const aggregate = { stretch: 0, area: 0, bend: 0 };
     let count = 0;
@@ -454,6 +505,20 @@ export class StackSimulation {
         bend: aggregate.bend / count,
       };
     }
+  }
+
+  applyAdaptiveContactRigidity() {
+    const stats = this.metrics?.contactStats;
+    if (!stats) return;
+    const maxPenetration = stats.maxPenetration ?? 0;
+    const target = clamp01((maxPenetration - 2) / 10);
+    this.metrics.contactRigidity = { target, applied: target };
+    const baseConfig = this.contactConfig ?? {};
+    const tuned = {
+      contactIterations: Math.round(lerp(baseConfig.minContactIterations ?? 2, baseConfig.maxContactIterations ?? 8, target)),
+      radiusScale: lerp(baseConfig.minRadiusScale ?? 1, baseConfig.maxRadiusScale ?? 1.4, target),
+    };
+    this.contactConfig = { ...baseConfig, ...tuned };
   }
 
   recordDeterminism() {
@@ -710,15 +775,6 @@ export class StackSimulation {
     }
   }
 
-  syncVelocities(dt) {
-    this.artifacts.forEach((artifact) => {
-      artifact.particles.forEach((particle) => {
-        particle.velocity.x = (particle.position.x - particle.prevPosition.x) / dt;
-        particle.velocity.y = (particle.position.y - particle.prevPosition.y) / dt;
-      });
-    });
-  }
-
   spawnInternal(spawnParams, seedOverride) {
     const spawnRng = this.rng.clone();
     spawnRng.setSeed(seedOverride ?? `${spawnParams.shapeId}-${this.spawnCounter++}`);
@@ -803,6 +859,13 @@ function now() {
 function clamp01(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function lerp(a, b, t) {
+  if (!Number.isFinite(a)) a = 0;
+  if (!Number.isFinite(b)) b = 0;
+  if (!Number.isFinite(t)) t = 0;
+  return a + (b - a) * t;
 }
 
 function scaleGravity(base, scale, worldScale = 1) {

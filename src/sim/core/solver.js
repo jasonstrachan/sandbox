@@ -6,27 +6,80 @@ export class XPBDSolver {
   }
 
   step(mesh, dt, environment = {}, iterationOverride) {
-    const { substeps, gravity } = this.config;
-    const iterations = iterationOverride ?? this.config.iterations;
-    const subDt = dt / substeps;
-    for (let stepIndex = 0; stepIndex < substeps; stepIndex += 1) {
-      applyExternalForces(mesh, subDt, environment.gravity ?? gravity);
-      predictPositions(mesh, subDt);
-      applyBoundaryCcd(mesh, environment);
-      for (let iter = 0; iter < iterations; iter += 1) {
-        solveDistanceSet(mesh, subDt, environment);
-        solveAreaSet(mesh, subDt, environment);
-        solveBendSet(mesh, subDt);
-        solveJointSet(mesh, subDt);
-        solveGroundPlane(mesh, environment);
-      }
-      applyWriteback(mesh);
-      finalizeVelocities(mesh, subDt);
-      applyVelocityDamping(mesh, subDt);
-      applyGroundFriction(mesh, subDt, environment);
-    }
-    mesh.age += dt;
+    if (!mesh) return { contactStats: null };
+    const entry = {
+      mesh,
+      iterations: iterationOverride ?? this.config.iterations,
+      shouldSolve: true,
+      artifactIndex: 0,
+    };
+    return this.stepSystem({
+      entries: [entry],
+      dt,
+      environment,
+      artifacts: [mesh],
+    });
   }
+
+  stepSystem(options = {}) {
+    const { entries, dt, environment = {}, contactBuilder, contactConfig = {}, artifacts = [] } = options;
+    if (!Array.isArray(entries) || !entries.length) return { contactStats: null };
+    const { substeps, gravity } = this.config;
+    const subDt = dt / substeps;
+    const maxIterations = computeMaxIterations(entries, this.config.iterations);
+    const contactIterations = Math.max(1, Math.floor(contactConfig.contactIterations ?? contactConfig.iterations ?? 1));
+    let latestStats = null;
+    for (let stepIndex = 0; stepIndex < substeps; stepIndex += 1) {
+      entries.forEach((entry) => {
+        if (!entry.shouldSolve) return;
+        applyExternalForces(entry.mesh, subDt, environment.gravity ?? gravity);
+        predictPositions(entry.mesh, subDt);
+        applyBoundaryCcd(entry.mesh, environment);
+      });
+      for (let iter = 0; iter < maxIterations; iter += 1) {
+        entries.forEach((entry) => {
+          if (!entry.shouldSolve) return;
+          const limit = entry.iterations ?? this.config.iterations;
+          if (iter >= limit) return;
+          const mesh = entry.mesh;
+          solveDistanceSet(mesh, subDt, environment);
+          solveAreaSet(mesh, subDt, environment);
+          solveBendSet(mesh, subDt);
+          solveJointSet(mesh, subDt);
+          solveGroundPlane(mesh, environment);
+        });
+        let constraints = [];
+        if (typeof contactBuilder === 'function') {
+          const contactData = contactBuilder({ stepIndex, iteration: iter, dt: subDt });
+          if (contactData?.stats) latestStats = contactData.stats;
+          constraints = contactData?.contacts ?? contactData?.state?.activeContacts ?? [];
+        }
+        if (constraints?.length) {
+          for (let pass = 0; pass < contactIterations; pass += 1) {
+            solveContactConstraints(constraints, artifacts, subDt, contactConfig);
+          }
+        }
+      }
+      entries.forEach((entry) => {
+        if (!entry.shouldSolve) return;
+        applyWriteback(entry.mesh);
+        finalizeVelocities(entry.mesh, subDt);
+        applyVelocityDamping(entry.mesh, subDt);
+        applyGroundFriction(entry.mesh, subDt, environment);
+        entry.mesh.age += subDt;
+      });
+    }
+    return { contactStats: latestStats };
+  }
+}
+
+function computeMaxIterations(entries, fallback) {
+  let maxIterations = fallback ?? 0;
+  entries.forEach((entry) => {
+    if (!entry?.shouldSolve) return;
+    maxIterations = Math.max(maxIterations, Number.isFinite(entry.iterations) ? entry.iterations : fallback ?? 0);
+  });
+  return Math.max(1, Math.floor(maxIterations || 1));
 }
 
 function applyExternalForces(mesh, dt, gravity) {
@@ -358,6 +411,148 @@ function applyGroundFriction(mesh, dt, environment) {
       particle.velocity.x = Math.sign(next) === dir ? next : 0;
     }
   });
+}
+
+function solveContactConstraints(constraints, artifacts, dt, options = {}) {
+  if (!Array.isArray(constraints) || !constraints.length) return;
+  if (!Array.isArray(artifacts) || !artifacts.length) return;
+  const compliance = Math.max(0, options.contactCompliance ?? options.compliance ?? 0);
+  const slop = Math.max(0, options.slop ?? 0.5);
+  const staticFriction = Math.max(0, options.friction?.static ?? options.staticFriction ?? 0.5);
+  const kineticFriction = Math.max(0, options.friction?.kinetic ?? options.kineticFriction ?? 0.35);
+  const alpha = compliance > 0 ? compliance / (dt * dt) : 0;
+  constraints.forEach((constraint) => {
+    const artifactA = artifacts[constraint.artifactIndexA];
+    const artifactB = artifacts[constraint.artifactIndexB];
+    if (!artifactA || !artifactB) return;
+    const endpointA = resolveContactEndpoint(artifactA, constraint.pointA);
+    const endpointB = resolveContactEndpoint(artifactB, constraint.pointB);
+    if (!endpointA || !endpointB) return;
+    const normal = computeContactNormal(endpointA.position, endpointB.position, constraint.normal);
+    const rel = projectAlong(endpointB.position, endpointA.position, normal);
+    const minDistance = constraint.minDistance ?? 0;
+    const penetration = minDistance - rel - slop;
+    if (penetration <= 0) return;
+    const denom = endpointA.invSum + endpointB.invSum + alpha;
+    if (denom === 0) return;
+    const lambdaN = penetration / denom;
+    applyEndpointCorrection(endpointA, -lambdaN, normal);
+    applyEndpointCorrection(endpointB, lambdaN, normal);
+    refreshEndpointPosition(endpointA);
+    refreshEndpointPosition(endpointB);
+    const tangent = { x: -normal.y, y: normal.x };
+    const slip = projectAlong(endpointB.position, endpointA.position, tangent);
+    const absSlip = Math.abs(slip);
+    if (absSlip <= 1e-5) return;
+    const maxStatic = staticFriction * penetration;
+    let target = 0;
+    if (absSlip <= maxStatic) {
+      target = slip;
+    } else {
+      target = Math.sign(slip) * Math.min(absSlip, kineticFriction * penetration);
+    }
+    if (target === 0) return;
+    const lambdaT = target / denom;
+    applyEndpointCorrection(endpointA, -lambdaT, tangent);
+    applyEndpointCorrection(endpointB, lambdaT, tangent);
+    refreshEndpointPosition(endpointA);
+    refreshEndpointPosition(endpointB);
+  });
+}
+
+function resolveContactEndpoint(artifact, descriptor) {
+  if (!artifact || !descriptor) return null;
+  const influences = [];
+  if (descriptor.type === 'particle') {
+    const particle = artifact.particles?.[descriptor.particleIndex];
+    if (!particle) return null;
+    influences.push({ particle, weight: 1 });
+  } else if (descriptor.type === 'proxy') {
+    const proxy = artifact.contact?.proxies?.[descriptor.proxyIndex];
+    if (!proxy || !proxy.indices?.length) return null;
+    proxy.indices.forEach((particleIndex, idx) => {
+      const particle = artifact.particles?.[particleIndex];
+      if (!particle) return;
+      const weight = proxy.weights?.[idx] ?? 0;
+      if (weight === 0) return;
+      influences.push({ particle, weight });
+    });
+  } else if (descriptor.type === 'cluster') {
+    const cluster = artifact.contact?.clusters?.[descriptor.clusterIndex];
+    if (!cluster || !cluster.indices?.length) return null;
+    cluster.indices.forEach((particleIndex, idx) => {
+      const particle = artifact.particles?.[particleIndex];
+      if (!particle) return;
+      const weight = cluster.weights?.[idx] ?? 0;
+      if (weight === 0) return;
+      influences.push({ particle, weight });
+    });
+  } else {
+    return null;
+  }
+  if (!influences.length) return null;
+  let invSum = 0;
+  let posX = 0;
+  let posY = 0;
+  let totalWeight = 0;
+  influences.forEach(({ particle, weight }) => {
+    invSum += (weight * weight) * (particle.invMass ?? 0);
+    posX += particle.position.x * weight;
+    posY += particle.position.y * weight;
+    totalWeight += weight;
+  });
+  const inv = totalWeight !== 0 ? 1 / totalWeight : 0;
+  return {
+    influences,
+    invSum,
+    position: {
+      x: posX * inv,
+      y: posY * inv,
+    },
+  };
+}
+
+function applyEndpointCorrection(endpoint, lambda, axis) {
+  if (!endpoint || !endpoint.influences) return;
+  endpoint.influences.forEach(({ particle, weight }) => {
+    if (!particle || particle.pinned || particle.invMass === 0) return;
+    const scale = lambda * weight * particle.invMass;
+    particle.position.x += axis.x * scale;
+    particle.position.y += axis.y * scale;
+  });
+}
+
+function refreshEndpointPosition(endpoint) {
+  if (!endpoint || !endpoint.influences?.length) return;
+  let posX = 0;
+  let posY = 0;
+  let total = 0;
+  endpoint.influences.forEach(({ particle, weight }) => {
+    if (!particle) return;
+    posX += particle.position.x * weight;
+    posY += particle.position.y * weight;
+    total += weight;
+  });
+  if (total === 0) return;
+  const inv = 1 / total;
+  endpoint.position.x = posX * inv;
+  endpoint.position.y = posY * inv;
+}
+
+function computeContactNormal(positionA, positionB, fallback) {
+  const dx = positionB.x - positionA.x;
+  const dy = positionB.y - positionA.y;
+  const length = Math.hypot(dx, dy);
+  if (length <= 1e-6) {
+    return fallback ?? { x: 0, y: 1 };
+  }
+  return { x: dx / length, y: dy / length };
+}
+
+function projectAlong(pointB, pointA, axis) {
+  const dx = pointB.x - pointA.x;
+  const dy = pointB.y - pointA.y;
+  return dx * axis.x + dy * axis.y;
 }
 
 function computeTriangleArea(a, b, c) {
