@@ -1,3 +1,7 @@
+const DEFAULT_ATTACHMENT_STIFFNESS = 0.02;
+const DEFAULT_ATTACHMENT_DAMPING = 0.5;
+const DEFAULT_ATTACHMENT_EPSILON = 1e-3;
+
 export class StrataGrid {
   constructor({ width, height, cellSize = 32 } = {}) {
     this.cellSize = cellSize;
@@ -8,6 +12,9 @@ export class StrataGrid {
     this.stressScale = 0.015;
     this.creepIterations = 3;
     this.creepRate = 0.25;
+    this.attachmentStiffness = DEFAULT_ATTACHMENT_STIFFNESS;
+    this.attachmentDamping = DEFAULT_ATTACHMENT_DAMPING;
+    this.attachmentEpsilon = DEFAULT_ATTACHMENT_EPSILON;
     this.resize(width ?? 1024, height ?? 768);
   }
 
@@ -54,19 +61,34 @@ export class StrataGrid {
       if (column.sigma > this.maxStress) this.maxStress = column.sigma;
     });
     this.applyCreep();
+    this.smoothSurfaceProfile();
   }
 
   applyAttachments(artifacts = []) {
-    if (!this.columns?.length) return;
-    const hasPendingShift = this.columns.some((column) => column.pendingShift !== 0);
-    if (!hasPendingShift) return;
+    if (!this.columns?.length || !artifacts?.length) return;
+    const epsilon = this.attachmentEpsilon;
+    const damping = this.attachmentDamping;
     artifacts.forEach((artifact) => {
+      if (!artifact) return;
       const coupling = artifact.material?.gridCouplingScale ?? 1;
-      artifact.particles?.forEach((particle) => {
-        if (!particle.boundary) return;
-        const shift = this.sampleDownshiftDelta(particle.position.x);
-        if (!shift) return;
-        particle.position.y += shift * coupling;
+      if (!artifact.particles?.length) return;
+      if (coupling <= 0) return;
+      const weight = clamp01(artifact.attachmentWeight ?? 0);
+      if (weight <= 0) return;
+      const stiffness = this.attachmentStiffness * coupling * weight;
+      artifact.particles.forEach((particle) => {
+        if (!particle || !particle.boundary) return;
+        if (particle.invMass === 0) return;
+        const targetY = this.sampleSmoothedSurface(particle.position.x);
+        if (!Number.isFinite(targetY)) return;
+        const dy = targetY - particle.position.y;
+        if (dy <= epsilon) return;
+        const deltaY = dy * stiffness;
+        if (Math.abs(deltaY) <= epsilon) return;
+        particle.position.y += deltaY;
+        if (particle.prevPosition) {
+          particle.prevPosition.y += deltaY * damping;
+        }
       });
     });
     this.columns.forEach((column) => {
@@ -88,6 +110,13 @@ export class StrataGrid {
   sampleStress(x) {
     const colIndex = clampIndex(Math.floor(x / this.cellSize), this.columnCount);
     return this.columns[colIndex]?.sigma ?? 0;
+  }
+
+  sampleSmoothedSurface(x) {
+    const colIndex = clampIndex(Math.floor(x / this.cellSize), this.columnCount);
+    const column = this.columns[colIndex];
+    if (!column) return null;
+    return column.smoothedSurface ?? column.surface ?? this.height;
   }
 
   sampleSurfaceRange(minX, maxX) {
@@ -120,6 +149,37 @@ export class StrataGrid {
       }
     }
   }
+
+  smoothSurfaceProfile() {
+    if (!this.columns?.length) return;
+    const count = this.columns.length;
+    const maxTarget = this.height + (this.maxDownshift ?? 0);
+    if (count === 1) {
+      const column = this.columns[0];
+      const surface = column.surface ?? this.height;
+      const downshift = column.downshift ?? 0;
+      column.smoothedSurface = clamp(surface + downshift, 0, maxTarget);
+      return;
+    }
+    const smoothed = new Array(count);
+    const last = count - 1;
+    const surfaces = this.columns.map((column) => {
+      const surface = column.surface ?? this.height;
+      const downshift = column.downshift ?? 0;
+      return clamp(surface + downshift, 0, maxTarget);
+    });
+    smoothed[0] = (surfaces[0] + surfaces[1]) * 0.5;
+    smoothed[last] = (surfaces[last] + surfaces[last - 1]) * 0.5;
+    for (let i = 1; i < last; i += 1) {
+      const prev = surfaces[i - 1];
+      const curr = surfaces[i];
+      const next = surfaces[i + 1];
+      smoothed[i] = (prev + 2 * curr + next) * 0.25;
+    }
+    for (let i = 0; i < count; i += 1) {
+      this.columns[i].smoothedSurface = clamp(smoothed[i], 0, maxTarget);
+    }
+  }
 }
 
 function clamp(value, min, max) {
@@ -140,7 +200,15 @@ function createColumn() {
     downshiftApplied: 0,
     pendingShift: 0,
     surface: 0,
+    smoothedSurface: 0,
     stress: 0,
     sigma: 0,
   };
+}
+
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0;
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
 }

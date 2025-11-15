@@ -15,8 +15,11 @@ const BURY_MARGIN_PX = 20;
 const REST_MARGIN_PX = 5;
 const COVER_GAP_TOLERANCE_PX = 6;
 const BURY_SETTLE_FRAMES = 240;
+const BURY_EVIDENCE_FRAMES = 120;
 const SETTLE_ASPECT_THRESHOLD = 1.05;
 const OFFSCREEN_MARGIN_PX = 48;
+const GRID_ATTACHMENT_RAMP_FRAMES = 120;
+const GRID_ATTACHMENT_RESIDUAL_FACTOR = 1.5;
 
 export class StackSimulation {
   constructor(options = {}) {
@@ -53,6 +56,9 @@ export class StackSimulation {
     this.remnants = [];
     this.maxFrameDt = options.maxFrameDt ?? DEFAULT_MAX_FRAME_DT;
     this.maxCatchupSteps = options.maxCatchupSteps ?? DEFAULT_MAX_CATCHUP_STEPS;
+    this.gridAttachmentRampFrames = options.gridAttachmentRampFrames ?? GRID_ATTACHMENT_RAMP_FRAMES;
+    this.buryEvidenceFrames = options.buryEvidenceFrames ?? BURY_EVIDENCE_FRAMES;
+    this.gridAttachmentResidualFactor = options.gridAttachmentResidualFactor ?? GRID_ATTACHMENT_RESIDUAL_FACTOR;
     this.airDrag = Math.max(0, options.airDrag ?? 0);
     this.terminalVelocity = options.terminalVelocity ?? 1600;
     this.restitution = clamp01(options.restitution ?? 0.2);
@@ -91,6 +97,11 @@ export class StackSimulation {
   setSettleBias(value) {
     if (!Number.isFinite(value) || value < 0) return;
     this.settleBias = value;
+  }
+
+  setBuryEvidenceFrames(value) {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.buryEvidenceFrames = Math.max(0, Math.floor(value));
   }
 
   setMaxArtifacts(count, options = {}) {
@@ -207,7 +218,8 @@ export class StackSimulation {
       const iterations = this.iterationsForTier(tier);
       const energyBefore = isActive ? computeKineticEnergy(artifact) : 0;
       const nextFrame = artifact.nextUpdateFrame ?? 0;
-      const shouldSolve = tier !== 'buried' || this.frameIndex >= nextFrame;
+      const hasAttachment = (artifact.attachmentWeight ?? 0) > 0;
+      const shouldSolve = tier !== 'buried' || this.frameIndex >= nextFrame || hasAttachment;
       if (!shouldSolve) return;
       const baseBeta = artifact.material.plastic?.beta;
       const betaScale = tier === 'buried' ? 0.25 : 1;
@@ -231,12 +243,14 @@ export class StackSimulation {
     this.resolveContacts(dt);
     const contactTime = now() - contactStart;
 
+    this.updateAttachmentWeights();
     const gridStart = now();
     this.grid.accumulateFromArtifacts(this.artifacts);
     this.grid.finalize();
-    const buried = this.artifacts.filter((artifact) => (artifact.tier ?? 'active') === 'buried');
-    if (buried.length) {
-      this.grid.applyAttachments(buried);
+    const residualBaseline = this.computeAttachmentResidualBaseline();
+    const attachments = this.artifacts.filter((artifact) => this.shouldApplyGridAttachment(artifact, residualBaseline));
+    if (attachments.length) {
+      this.grid.applyAttachments(attachments);
     }
     const gridTime = now() - gridStart;
 
@@ -348,6 +362,57 @@ export class StackSimulation {
     return count;
   }
 
+  updateAttachmentWeights() {
+    if (!this.artifacts?.length) return;
+    const rampFrames = Math.max(1, Math.floor(this.gridAttachmentRampFrames ?? GRID_ATTACHMENT_RAMP_FRAMES));
+    this.artifacts.forEach((artifact) => {
+      if (!artifact) return;
+      if ((artifact.tier ?? 'active') !== 'buried') {
+        artifact.attachmentWeight = 0;
+        return;
+      }
+      const entered = artifact.tierEnteredAt ?? this.frameIndex;
+      const framesInTier = this.frameIndex - entered;
+      const t = clamp01(framesInTier / rampFrames);
+      artifact.attachmentWeight = t;
+    });
+  }
+
+  computeAttachmentResidualBaseline() {
+    if (!this.artifacts?.length) return null;
+    let stretch = 0;
+    let area = 0;
+    let count = 0;
+    this.artifacts.forEach((artifact) => {
+      if (!artifact) return;
+      const tier = artifact.tier ?? 'active';
+      if (tier === 'buried') return;
+      const residuals = getArtifactResiduals(artifact);
+      if (!Number.isFinite(residuals.stretch) && !Number.isFinite(residuals.area)) return;
+      stretch += residuals.stretch || 0;
+      area += residuals.area || 0;
+      count += 1;
+    });
+    if (count === 0) return null;
+    return {
+      stretch: stretch / count,
+      area: area / count,
+    };
+  }
+
+  shouldApplyGridAttachment(artifact, baseline) {
+    if (!artifact) return false;
+    if ((artifact.tier ?? 'active') !== 'buried') return false;
+    if ((artifact.attachmentWeight ?? 0) <= 0) return false;
+    if (!baseline) return true;
+    const factor = this.gridAttachmentResidualFactor ?? GRID_ATTACHMENT_RESIDUAL_FACTOR;
+    if (!Number.isFinite(factor) || factor <= 0) return true;
+    const residuals = getArtifactResiduals(artifact);
+    if (baseline.stretch > 0 && residuals.stretch > baseline.stretch * factor) return false;
+    if (baseline.area > 0 && residuals.area > baseline.area * factor) return false;
+    return true;
+  }
+
   hasClearance(candidateBounds) {
     const margin = 12;
     return this.artifacts.every((artifact) => {
@@ -425,7 +490,12 @@ export class StackSimulation {
     const strataBuried = bounds.minY > surface + BURY_MARGIN_PX;
     const deepStrataBuried = bounds.minY > surface + BURY_MARGIN_PX * 2;
     const stronglyBuried = coverBuried || deepStrataBuried;
-    if (stronglyBuried && readyForBurial) tier = 'buried';
+    const evidenceRequired = Math.max(1, Math.floor(this.buryEvidenceFrames ?? BURY_EVIDENCE_FRAMES));
+    const prevEvidence = artifact.burialEvidenceFrames ?? 0;
+    const nextEvidence = stronglyBuried ? Math.min(evidenceRequired, prevEvidence + 1) : Math.max(0, prevEvidence - 1);
+    artifact.burialEvidenceFrames = nextEvidence;
+    const hasEvidence = nextEvidence >= evidenceRequired;
+    if (stronglyBuried && readyForBurial && hasEvidence) tier = 'buried';
     else if (bounds.maxY > surface - REST_MARGIN_PX || coverBuried || strataBuried) tier = 'resting';
     else tier = 'active';
     const hasActiveJoints = artifact.topology?.joints?.some((joint) => !joint.broken);
@@ -435,6 +505,12 @@ export class StackSimulation {
     if (tier !== previous) {
       artifact.tier = tier;
       artifact.tierEnteredAt = this.frameIndex;
+      if (tier === 'buried') {
+        artifact.attachmentWeight = 0;
+      }
+      if (tier !== 'buried') {
+        artifact.burialEvidenceFrames = 0;
+      }
     }
 
     if (tier === 'buried') {
@@ -653,6 +729,8 @@ export class StackSimulation {
     artifact.bounds = computeBounds(artifact);
     artifact.dropTest = makeDropTest(artifact, this.environment.groundY ?? this.bounds.height * 0.9);
     this.artifacts.push(artifact);
+    // TEMP: no initial attachment for active meshes
+    // this.grid?.applyAttachments([artifact]);
     return artifact;
   }
 
@@ -690,6 +768,17 @@ function computeBounds(artifact) {
     if (particle.position.y > maxY) maxY = particle.position.y;
   });
   return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function getArtifactResiduals(artifact) {
+  if (!artifact) return { stretch: 0, area: 0 };
+  const debug = artifact.debug ?? {};
+  const stretch = rms(debug.stretchResiduals);
+  const area = rms(debug.areaResiduals);
+  return {
+    stretch: Number.isFinite(stretch) ? stretch : 0,
+    area: Number.isFinite(area) ? area : 0,
+  };
 }
 
 function quantize(value, quantum = 4) {

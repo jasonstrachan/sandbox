@@ -21,6 +21,7 @@ const NUMERIC_CONTROL_KEYS = new Set([
   'scale',
   'jitter',
   'settleBias',
+  'buryEvidenceFrames',
   'velocityDamping',
   'airDrag',
   'writebackDamping',
@@ -45,6 +46,7 @@ export const stackSimulator = {
     { key: 'scale', label: 'Scale', type: 'range', min: 0.65, max: 1.25, step: 0.05, value: 1 },
     { key: 'jitter', label: 'Spawn Jitter', type: 'range', min: 0, max: 8, step: 0.5, value: 0 },
     { key: 'settleBias', label: 'Settle Bias', type: 'range', min: 0, max: 1200, step: 20, value: 520 },
+    { key: 'buryEvidenceFrames', label: 'Burial Grace (frames)', type: 'range', min: 0, max: 360, step: 10, value: 120 },
     { key: 'velocityDamping', label: 'Velocity Damping', type: 'range', min: 0, max: 12, step: 0.5, value: 3 },
     { key: 'airDrag', label: 'Air Drag', type: 'range', min: 0, max: 4, step: 0.1, value: 0.6 },
     { key: 'writebackDamping', label: 'Writeback', type: 'range', min: 0, max: 0.5, step: 0.01, value: 0.15 },
@@ -101,6 +103,7 @@ export const stackSimulator = {
       impactBounce: 0.2,
       timeScale: 1,
       plasticBeta: 0.02,
+      buryEvidenceFrames: 120,
       autoSpawn: true,
       spawnInterval: 2.2,
       spawnTimer: 0,
@@ -123,6 +126,7 @@ export const stackSimulator = {
     simulation.setAirDrag?.(state.airDrag);
     simulation.setRestitution?.(state.impactBounce);
     simulation.setSettleBias?.(state.settleBias);
+    simulation.setBuryEvidenceFrames?.(state.buryEvidenceFrames);
 
     const enqueueNextShape = () => {
       const shape = shapeOptions[state.sequenceIndex % shapeOptions.length];
@@ -173,6 +177,7 @@ export const stackSimulator = {
       simulation.reset();
       simulation.setBounds(env.size().width, env.size().height);
       simulation.setMaxArtifacts?.(state.maxArtifacts, { lock: true });
+      simulation.setBuryEvidenceFrames?.(state.buryEvidenceFrames);
       state.spawnTimer = 0;
       state.sequenceIndex = 0;
       state.rng = new Xoshiro128('stack-prototype');
@@ -300,6 +305,9 @@ export const stackSimulator = {
         }
         if (key === 'settleBias') {
           simulation.setSettleBias?.(state.settleBias);
+        }
+        if (key === 'buryEvidenceFrames') {
+          simulation.setBuryEvidenceFrames?.(state.buryEvidenceFrames);
         }
         if (key === 'timeScale') {
           simulation.setTimeScale?.(state.timeScale);
