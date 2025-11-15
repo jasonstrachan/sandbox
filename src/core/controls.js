@@ -30,30 +30,46 @@ export function createControlPanel(root) {
       wrapper.dataset.key = control.key;
 
       const title = document.createElement('span');
+      title.className = 'control-label';
       title.textContent = control.label;
       wrapper.appendChild(title);
 
       const input = renderControl(control);
-      inputs.set(control.key, input);
+      const readout = createValueReadout(control);
+      if (readout) {
+        readout.textContent = formatControlValue(control, control.value);
+      }
+      const inputContainer = document.createElement('div');
+      inputContainer.className = 'control-input';
+      inputContainer.appendChild(input);
+      if (readout) inputContainer.appendChild(readout);
+      inputs.set(control.key, { input, readout, control });
 
       input.addEventListener('input', (event) => {
         const value = readValue(control.type, event.target);
+        if (readout) {
+          readout.textContent = formatControlValue(control, value);
+        }
         onChange(control.key, value);
       });
 
-      wrapper.appendChild(input);
+      wrapper.appendChild(inputContainer);
       root.appendChild(wrapper);
     });
   }
 
   function update(key, value) {
-    const input = inputs.get(key);
-    if (!input) return;
+    const entry = inputs.get(key);
+    if (!entry) return;
+    const { input, readout, control } = entry;
 
     if (input.type === 'checkbox') {
       input.checked = Boolean(value);
     } else {
       input.value = value;
+    }
+    if (readout) {
+      readout.textContent = formatControlValue(control, value);
     }
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
@@ -137,4 +153,29 @@ function readValue(type, input) {
   if (type === 'checkbox') return input.checked;
   if (type === 'number' || type === 'range') return Number(input.value);
   return input.value;
+}
+
+function createValueReadout(control) {
+  if (control.type !== 'range') return null;
+  const span = document.createElement('span');
+  span.className = 'control-value';
+  return span;
+}
+
+function formatControlValue(control, value) {
+  if (value == null || Number.isNaN(value)) return '';
+  if (typeof value !== 'number') return String(value);
+  const precision = resolvePrecision(control.step);
+  return value.toFixed(precision);
+}
+
+function resolvePrecision(step) {
+  if (!Number.isFinite(step)) return 2;
+  const str = step.toString();
+  if (str.includes('e')) {
+    const [, exp] = str.split('e-');
+    return Math.max(Number(exp) || 0, 0);
+  }
+  const decimal = str.split('.')[1];
+  return decimal ? decimal.length : 0;
 }

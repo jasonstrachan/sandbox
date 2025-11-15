@@ -209,9 +209,9 @@ export class StackSimulation {
       const nextFrame = artifact.nextUpdateFrame ?? 0;
       const shouldSolve = tier !== 'buried' || this.frameIndex >= nextFrame;
       if (!shouldSolve) return;
-      const baseBeta = artifact.material.plastic?.beta ?? 0;
+      const baseBeta = artifact.material.plastic?.beta;
       const betaScale = tier === 'buried' ? 0.25 : 1;
-      artifact.material.plasticRuntimeBeta = baseBeta * betaScale;
+      artifact.material.plasticRuntimeBeta = scalePlasticBeta(baseBeta, betaScale);
       this.solver.step(artifact, dt, solverEnv, iterations);
       this.applyAirDrag(artifact, dt);
       if (isActive) {
@@ -234,7 +234,10 @@ export class StackSimulation {
     const gridStart = now();
     this.grid.accumulateFromArtifacts(this.artifacts);
     this.grid.finalize();
-    this.grid.applyAttachments(this.artifacts);
+    const buried = this.artifacts.filter((artifact) => (artifact.tier ?? 'active') === 'buried');
+    if (buried.length) {
+      this.grid.applyAttachments(buried);
+    }
     const gridTime = now() - gridStart;
 
     this.metrics.timings = { grid: gridTime, solver: solverTime, contacts: contactTime };
@@ -420,7 +423,9 @@ export class StackSimulation {
     let tier = previous;
     const coverBuried = Number.isFinite(coverSurface) && bounds.minY > coverSurface + BURY_MARGIN_PX;
     const strataBuried = bounds.minY > surface + BURY_MARGIN_PX;
-    if ((coverBuried || strataBuried) && readyForBurial) tier = 'buried';
+    const deepStrataBuried = bounds.minY > surface + BURY_MARGIN_PX * 2;
+    const stronglyBuried = coverBuried || deepStrataBuried;
+    if (stronglyBuried && readyForBurial) tier = 'buried';
     else if (bounds.maxY > surface - REST_MARGIN_PX || coverBuried || strataBuried) tier = 'resting';
     else tier = 'active';
     const hasActiveJoints = artifact.topology?.joints?.some((joint) => !joint.broken);
@@ -648,7 +653,6 @@ export class StackSimulation {
     artifact.bounds = computeBounds(artifact);
     artifact.dropTest = makeDropTest(artifact, this.environment.groundY ?? this.bounds.height * 0.9);
     this.artifacts.push(artifact);
-    this.grid?.applyAttachments([artifact]);
     return artifact;
   }
 
@@ -718,6 +722,21 @@ function scaleGravity(base, scale, worldScale = 1) {
     x: (base?.x ?? 0) * factor,
     y: (base?.y ?? 0) * factor,
   };
+}
+
+function scalePlasticBeta(beta, scale) {
+  if (beta == null) return beta;
+  const factor = Number.isFinite(scale) ? scale : 1;
+  if (typeof beta === 'number') {
+    return beta * factor;
+  }
+  if (typeof beta !== 'object') return beta;
+  const next = {};
+  Object.keys(beta).forEach((key) => {
+    const value = beta[key];
+    next[key] = typeof value === 'number' ? value * factor : value;
+  });
+  return next;
 }
 
 function captureOutline(artifact) {

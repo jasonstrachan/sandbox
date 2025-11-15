@@ -1,0 +1,27 @@
+
+> sandbox@1.0.0 dev
+> vite --host 127.0.0.1 --port 5174
+
+
+  VITE v7.1.6  ready in 61 ms
+
+  ➜  Local:   http://127.0.0.1:5174/
+9:43:10 PM [vite] (client) page reload src/sim/core/solver.js
+9:44:10 PM [vite] (client) page reload src/sim/core/solver.js
+9:44:25 PM [vite] (client) page reload src/sim/core/solver.js
+9:44:34 PM [vite] (client) page reload src/sim/state/simulation.js
+9:44:45 PM [vite] (client) page reload src/sim/state/simulation.js
+8:45:31 AM [vite] (client) page reload src/sim/core/solver.js
+9:10:13 AM [vite] (client) page reload src/sim/core/solver.js
+9:10:23 AM [vite] (client) page reload src/sim/core/solver.js
+9:10:31 AM [vite] (client) page reload src/sim/core/solver.js
+9:24:45 AM [vite] (client) page reload src/sim/state/simulation.js
+9:26:42 AM [vite] (client) page reload src/sim/state/simulation.js
+9:28:17 AM [vite] (client) page reload src/sim/core/solver.js
+9:29:46 AM [vite] (client) page reload src/sim/core/solver.js
+9:44:22 AM [vite] (client) page reload src/sim/core/solver.js
+1:28:20 PM [vite] (client) page reload src/sim/state/simulation.js
+1:32:13 PM [vite] (client) page reload src/sim/state/simulation.js
+1:35:59 PM [vite] (client) page reload src/sim/state/simulation.js
+1:40:19 PM [vite] (client) page reload src/sim/state/simulation.js
+1:40:24 PM [vite] (client) page reload src/sim/state/simulation.js

@@ -65,7 +65,8 @@ function solveDistanceSet(mesh, dt, environment) {
   });
 }
 
-function solveDistance(mesh, edge, compliance, dt, materialConfig) {
+function solveDistance(mesh, edge, complianceSource, dt, materialConfig) {
+  const compliance = resolveStretchCompliance(complianceSource, edge.axis ?? 'default');
   const p0 = mesh.particles[edge.i0];
   const p1 = mesh.particles[edge.i1];
   const diffX = p1.position.x - p0.position.x;
@@ -94,6 +95,20 @@ function solveDistance(mesh, edge, compliance, dt, materialConfig) {
   const strain = C / (edge.restLength || 1);
   applyStretchPlasticity(edge, strain, mesh, dt, materialConfig);
   return Math.abs(C);
+}
+
+function resolveStretchCompliance(source, axis = 'default') {
+  if (source == null) return 0;
+  if (typeof source === 'number' && Number.isFinite(source)) return source;
+  if (typeof source !== 'object') return 0;
+  if (typeof source[axis] === 'number') return source[axis];
+  if (axis !== 'default' && typeof source.default === 'number') return source.default;
+  const fallbacks = ['horizontal', 'vertical', 'diagonal'];
+  for (let i = 0; i < fallbacks.length; i += 1) {
+    const key = fallbacks[i];
+    if (typeof source[key] === 'number') return source[key];
+  }
+  return 0;
 }
 
 function solveAreaSet(mesh, dt, environment) {
@@ -182,41 +197,15 @@ function effectiveAreaCompliance(mesh, baseCompliance, sigma, sigmaRef) {
 }
 
 function applyStretchPlasticity(edge, strain, mesh, dt, materialConfig) {
-  const plastic = materialConfig?.plastic ?? { beta: 0 };
-  const beta = materialConfig?.plasticRuntimeBeta ?? plastic.beta ?? 0;
-  if (!beta) return;
-  const threshold = plastic.yieldStrain ?? 1;
-  if (Math.abs(strain) < threshold) return;
-  const drift = strain * beta * dt;
-  edge.restLength = Math.max(1e-4, edge.restLength + edge.restLength * drift);
-  edge.plasticStrain = (edge.plasticStrain ?? 0) + Math.abs(drift);
-  mesh.plasticStrain = (mesh.plasticStrain ?? 0) + Math.abs(drift);
+  // DEBUG: no-op stretch plasticity
 }
 
 function applyAreaPlasticity(triangle, strain, mesh, dt) {
-  const plastic = mesh.material.plastic ?? { beta: 0 };
-  const beta = mesh.material.plasticRuntimeBeta ?? plastic.beta ?? 0;
-  if (!beta || !triangle.restArea) return;
-  const threshold = plastic.yieldStrain ?? 1;
-  if (Math.abs(strain) < threshold) return;
-  const drift = strain * beta * dt;
-  triangle.restArea = Math.max(1e-4, triangle.restArea + triangle.restArea * drift);
-  triangle.plasticStrain = (triangle.plasticStrain ?? 0) + Math.abs(drift);
-  mesh.plasticStrain = (mesh.plasticStrain ?? 0) + Math.abs(drift) * 0.5;
+  // DEBUG: no-op area plasticity
 }
 
 function applyBendPlasticity(bend, magnitude, mesh, dt) {
-  const plastic = mesh.material.plastic ?? { beta: 0 };
-  const beta = mesh.material.plasticRuntimeBeta ?? plastic.beta ?? 0;
-  if (!beta) return;
-  const thresholdDeg = plastic.yieldBendDeg ?? 180;
-  const threshold = (thresholdDeg * Math.PI) / 180;
-  if (magnitude < threshold * 0.01) return;
-  const drift = magnitude * beta * dt * 0.1;
-  bend.rest.x += drift;
-  bend.rest.y += drift;
-  bend.plasticStrain = (bend.plasticStrain ?? 0) + Math.abs(drift);
-  mesh.plasticStrain = (mesh.plasticStrain ?? 0) + Math.abs(drift) * 0.25;
+  // DEBUG: no-op bend plasticity
 }
 
 function applyBoundaryCcd(mesh, environment) {

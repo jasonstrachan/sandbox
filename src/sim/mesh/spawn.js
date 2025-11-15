@@ -174,10 +174,32 @@ function buildLatticeTopology(rows, cols, particles, indexMap) {
 function makeEdge(i0, i1, particles) {
   const a = particles[i0].local;
   const b = particles[i1].local;
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  const restLength = Math.hypot(dx, dy);
-  return { i0, i1, restLength, plasticStrain: 0 };
+  const diffX = b.x - a.x;
+  const diffY = b.y - a.y;
+  const restLength = Math.hypot(diffX, diffY) || 1e-8;
+  const tangent = {
+    x: diffX / restLength,
+    y: diffY / restLength,
+  };
+  const normal = { x: -tangent.y, y: tangent.x };
+  return {
+    i0,
+    i1,
+    restLength,
+    plasticStrain: 0,
+    axis: inferAxis(diffX, diffY),
+    tangent,
+    normal,
+  };
+}
+
+function inferAxis(dx, dy) {
+  const absX = Math.abs(dx);
+  const absY = Math.abs(dy);
+  if (absX < 1e-5 && absY < 1e-5) return 'horizontal';
+  if (absX >= absY * 0.999) return 'horizontal';
+  if (absY >= absX * 0.999) return 'vertical';
+  return 'diagonal';
 }
 
 function makeTriangle(i0, i1, i2, particles) {

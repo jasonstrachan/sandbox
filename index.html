@@ -47,6 +47,8 @@
         flex-direction: column;
         gap: 14px;
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+        max-height: calc(100vh - 32px);
+        overflow-y: auto;
       }
       h1 {
         margin: 0;
@@ -149,14 +151,31 @@
       }
       .control-row {
         display: grid;
-        grid-template-columns: 1fr 110px;
+        grid-template-columns: 1fr 140px;
         gap: 10px;
         align-items: center;
         margin-bottom: 8px;
       }
-      .control-row span {
+      .control-label {
         font-size: 13px;
         color: rgba(230, 240, 255, 0.8);
+      }
+      .control-input {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .control-input input[type='range'] {
+        flex: 1;
+      }
+      .control-value {
+        min-width: 44px;
+        padding: 2px 6px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 12px;
+        text-align: right;
+        color: rgba(230, 240, 255, 0.85);
       }
       .control-empty {
         margin: 0;
